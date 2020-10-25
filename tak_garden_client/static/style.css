@@ -1,0 +1,284 @@
+body {
+  background-color: #222;
+}
+
+h1 {
+  color: #ddd;
+}
+
+p, footer, #game_status, #player_status {
+  color: #ddd;
+}
+
+a:link {
+  color: #ddddff;
+}
+
+a:visited {
+  color: #aaaaff;
+}
+
+.main-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+}
+
+.board-wrapper {
+  flex: auto;
+  
+  display: grid;
+  grid-template-columns: 1.5em 1fr;
+  grid-template-rows: 1fr auto auto;
+  grid-template-areas: 
+    "ranks board"
+    ".     files"
+    ".     stone-counters";
+
+    /* This is not quite correct. Ideally we'd limit our height such that the aspect-ratio calculated width does not
+    exceed the viewport width. However doing it this way seems to limit the width to slightly narrower than the window width
+    which works fine for now */
+  max-height: 100vw; 
+}
+
+.ranks {
+  grid-area: ranks;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-around;
+}
+
+.ranks div {
+  font-size: 22px;
+  color: #ddd;
+}
+
+.files {
+  grid-area: files;
+  display: flex;
+  flex-direction: row;
+  justify-content: space-around;
+}
+
+.files div {
+  font-size: 22px;
+  color: #ddd;
+}
+
+.board {
+  position: relative;
+  grid-area: board;
+}
+
+.spaces {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: grid;
+}
+
+.space.dark {
+  background-color: #aaaaaa;
+}
+.space.light {
+  background-color: #bbbbbb;
+}
+
+.stones {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+}
+
+.stone-wrapper {
+  position: absolute;
+    /* Make our positioning relative to the bottom left corner of the board */
+  bottom: 0;
+  left: 0;
+
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.stone {
+  width: 50%;
+  height: 50%;
+  border-radius: 10%; /* rounded corners */
+  /* TODO fix the very small light gap along the "bottom" edge of a standing stone */
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2), 0 2px 1px rgba(0, 0, 0, 0.2); 
+}
+
+.stone.standing {
+  height: 20%;
+  border-radius: 10%/25%; /* second number is for shorter side, here height. Second number = width% * 0.first_number / height% */
+  transform: rotate(45deg);
+}
+
+.stone.cap {
+  width: 45%;
+  height: 45%;
+  border-radius: 50%;
+}
+
+.stone.light {
+  background-color: #f9f9f9;
+}
+
+.stone.dark {
+  background-color: #555;
+}
+
+.stone-counters {
+  grid-area: stone-counters;
+  display: grid;
+}
+
+.stone-counter-light-flat {
+  grid-area: light-flat;
+}
+.stone-counter-light-cap {
+  grid-area: light-cap;
+}
+.stone-counter-dark-flat {
+  grid-area: dark-flat;
+}
+.stone-counter-dark-cap {
+  grid-area: dark-cap;
+}
+
+.width-based-square {
+  /* We need to specify a height so that child element's percentage rules can use it */
+  height: 100%; 
+}
+
+.width-based-square::after {
+  content: "";
+  display: block;
+  padding-bottom: 100%;
+}
+
+.counter-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.counter-container > .stone {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.status-display {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  padding-bottom: 1em;
+}
+
+/* === Size-specific rules === */
+
+/* Both the board and the stone wrappers need to know the board size, so it's marked on their common ancestor,
+   the board wrapper. By changing the marker there, we can apply size-specific rules on all of them. */
+.board-wrapper.size-3 .spaces {
+ grid-template-columns: repeat(3, 1fr);
+ grid-template-rows: repeat(3, 1fr);
+}
+
+.board-wrapper.size-3 .stone-wrapper {
+ width: 33.33%;
+ height: 33.33%;
+}
+
+.board-wrapper.size-3 .stone-counters {
+ grid-template-columns: repeat(4, 1fr);
+ grid-template-areas: "light-cap light-flat dark-flat dark-cap";
+}
+
+
+.board-wrapper.size-4 .spaces {
+ grid-template-columns: repeat(4, 1fr);
+ grid-template-rows: repeat(4, 1fr);
+}
+
+.board-wrapper.size-4 .stone-wrapper {
+ width: 25%;
+ height: 25%;
+}
+
+.board-wrapper.size-4 .stone-counters {
+ grid-template-columns: repeat(4, 1fr);
+ grid-template-areas: "light-cap light-flat dark-flat dark-cap";
+}
+
+
+.board-wrapper.size-5 .spaces {
+  grid-template-columns: repeat(5, 1fr);
+  grid-template-rows: repeat(5, 1fr);
+}
+
+.board-wrapper.size-5 .stone-wrapper {
+  width: 20%;
+  height: 20%;
+}
+
+.board-wrapper.size-5 .stone-counters {
+  grid-template-columns: repeat(5, 1fr);
+  grid-template-areas: "light-cap light-flat . dark-flat dark-cap";
+}
+
+
+.board-wrapper.size-6 .spaces {
+  grid-template-columns: repeat(6, 1fr);
+  grid-template-rows: repeat(6, 1fr);
+}
+
+.board-wrapper.size-6 .stone-wrapper {
+  width: 16.66%;
+  height: 16.66%;
+}
+
+.board-wrapper.size-6 .stone-counters {
+  grid-template-columns: repeat(6, 1fr);
+  grid-template-areas: ". light-cap light-flat dark-flat dark-cap .";
+}
+
+
+.board-wrapper.size-7 .spaces {
+  grid-template-columns: repeat(7, 1fr);
+  grid-template-rows: repeat(7, 1fr);
+}
+
+.board-wrapper.size-7 .stone-wrapper {
+  width: 14.28%;
+  height: 14.28%;
+}
+
+.board-wrapper.size-7 .stone-counters {
+  grid-template-columns: repeat(7, 1fr);
+  grid-template-areas: ". light-cap light-flat . dark-flat dark-cap .";
+}
+
+
+.board-wrapper.size-8 .spaces {
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(8, 1fr);
+}
+
+.board-wrapper.size-8 .stone-wrapper {
+  width: 12.5%;
+  height: 12.5%;
+}
+
+.board-wrapper.size-8 .stone-counters {
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-areas: ". light-cap light-flat . . dark-flat dark-cap .";
+}

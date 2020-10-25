@@ -1,0 +1,193 @@
+# TODO
+. Read up on linux user accounts/groups, privileges (per user), permissions (per dir/file)
+. Adjust server setup to run server binary as less-privileged user.
+  Do I need to move the server dir to a directory that's outside of /home/tilman, and then
+  give out shared access to `tilman` (read/write/execute) and the server exec user (read/execute with limited write later on maybe)?
+x Investigate why serde_cbor doesn't seem to compact the variants of 
+  the server message type (it sends the name of them as a string).
+    Haven't confirmed this, but it seems like tuple enum variants 
+    (i.e. those that carry data) do not get compacted.
+
+# Local server setup 
+For local development testing. Roughly mirrors the eventual deployed setup.
+
+# Mac
+1. Setup an nginx reverse proxy with ssl support.
+  `brew install nginx`
+    Install nginx
+  `openssl req -x509 -out /usr/local/etc/nginx/localhost.crt -keyout /usr/local/etc/nginx/localhost.key -newkey rsa:4096 -nodes -subj '/CN=localhost'`
+    Generate a self-signed ssl certificate.
+    We need this for enabling https, and crucially wss, on the localhost connection.
+    Currently the client only attempts connections via wss, and will fail connection if encryption is not configured.
+
+  Create /usr/local/etc/nginx/servers/tak.garden.localhost.conf, with the following contents:
+    ```
+    server {
+
+      listen 443 ssl;
+      listen [::]:443 ssl ipv6only=on;
+      ssl_certificate /usr/local/etc/nginx/localhost.crt;
+      ssl_certificate_key /usr/local/etc/nginx/localhost.key;
+
+      server_name tak.garden.localhost;
+
+      location / {
+        proxy_pass http://127.0.0.1:3030;
+        proxy_buffering off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Host $host;
+      }
+
+      location /ws {
+        proxy_pass http://127.0.0.1:3030/ws;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+      }
+    }
+    ```
+    This is the config for reverse-proxying requests to https://tak.garden.localhost to our server running at 3030, using the self-signed
+    certificate for encryption.
+
+  Add the following line to `/etc/hosts`
+    `127.0.0.1 tak.garden.localhost`
+    This will route any traffic going to tak.garden.localhost to just localhost. This way we can make an nginx server config
+    specific to this domain.
+
+  `sudo nginx`
+    Start the server
+
+  Later stop the server with `sudo nginx -s stop`.
+
+
+# Public server setup
+For hosting the actual server and make it accessible over the internet.
+0. Set up DNS to route your domain to the hosted server's IP.
+  Set up A records for the domain root (@), and for www.
+
+1. Basic server setup, based on this article:
+  https://www.digitalocean.com/community/tutorials/initial-server-setup-with-ubuntu-20-04
+
+  `adduser tilman`
+    Create new user that will be more restricted than root.
+    Pick a good password!
+  `usermod -aG sudo tilman`
+    Grant sudo privileges to that account.
+  `rsync --archive --chown=tilman:tilman ~/.ssh /home/tilman`
+    Copy the authorized ssh key from root's config to the user's, so that we can use the same
+    key to login to the user. This assumes the droplet was set up to allow ssh access.
+  `ufw allow OpenSSH`
+    Allow ssh connections through the firewall.
+  `ufw enable`
+    Enable the firewall.
+  `ssh tilman@<server ip>` (in new terminal)
+    Finally, log into the new user and use it going forward.
+    Do this before exiting out of root's session, in case something went wrong.
+
+2. Set up rustak-server
+  `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+    Install rust (rustup, rustc, cargo, etc). See https://www.rust-lang.org/tools/install for reference.
+  `source ~/.cargo/env`
+    Update $PATH to include cargo etc for this shell session.
+  `sudo apt-get update`
+    Update package sources. Without this the next command failed to find some packages when I ran it.
+  `sudo apt install build-essential`
+    Install gcc, which is required by rustc for the linking stage.
+  `ssh-keygen`
+    Generate an ssh key for this server & user (hence no sudo).
+  Read the public key via `cat ~/.ssh/id_rsa.pub`, add the generated key to gitlab.
+    So that it has access to the git repos.
+    Only required while the repos are private.
+  `mkdir tak.garden && cd tak.garden`
+    Workspace folder for all the rust code. Should be a repo in the future.
+  Create Cargo.toml, with the following contents:
+    ```
+    [workspace]
+
+    members = [
+      "rustak",
+      "rustak-server",
+    ]
+    ```
+  `git clone --recurse-submodules git@gitlab.com:Keymaster/rustak.git`
+  `git clone git@gitlab.com:Keymaster/rustak-server.git`
+    Clone the rust code. Including the bounded-integer vendored submodule in rustak.
+  `cargo build --release`
+    Build the server binary!
+  Create /lib/systemd/system/tak.garden.service
+    ```
+    [Unit]
+    Description=tak.garden server
+
+    [Service]
+    Type=exec
+    Restart=always
+    RestartSec=5s
+    User=tilman
+    WorkingDirectory=/home/tilman/tak.garden/rustak-server
+    ExecStart=/home/tilman/tak.garden/target/release/rustak-server
+
+    [Install]
+    WantedBy=multi-user.target
+    ```
+  `sudo service tak.garden start`
+    Start the server service
+  `sudo apt install nginx-light`
+    Install the nginx server. We'll use this as the web-facing server, which then acts
+    as a reverse proxy to the rust web server.
+  `sudo rm /etc/nginx/sites-enabled/default`
+    Clear out the default nginx config, since it will block what our config wants to do.
+  Create /etc/nginx/sites-available/tak.garden.conf
+    (If you don't have a certificate yet)
+    ```
+    server {
+
+      listen 80;
+      listen [::]:80;
+
+      server_name tak.garden www.tak.garden;
+
+      location / {
+        proxy_pass http://127.0.0.1:3030;
+        proxy_buffering off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Host $host;
+      }
+
+      location /ws {
+        proxy_pass http://127.0.0.1:3030/ws;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+      }
+    }
+    ```
+    This creates the nginx server config, with settings to reverse-proxy forward
+    all requests to the  rust server, apart from the websocket endpoint, which 
+    gets special treatment for the websocket connection upgrade.
+      The websocket part is taken from https://www.nginx.com/blog/websocket-nginx/
+  `sudo ln -s /etc/nginx/sites-available/tak.garden.conf /etc/nginx/sites-enabled/tak.garden.conf`
+    Link the site config into sites-enabled, to have nginx actually include it in its routing.
+  `sudo nginx -s reload`
+    Actually load the config.
+  `sudo ufw allow 'Nginx Full'`
+    Allow access to nginx through the firewall.
+
+  `sudo snap install core; sudo snap refresh core`
+  `sudo snap install --classic certbot`
+  `sudo ln -s /snap/bin/certbot /usr/bin/certbot`
+  `sudo certbot --nginx`
+    Commands to setup certbot, generate a cert and include it in the nginx config.
+    Taken from https://certbot.eff.org/lets-encrypt/ubuntufocal-nginx
+
+  TODO: Run the web server under a user without sudo privileges.
+
+  Done!
+
+
+
+  

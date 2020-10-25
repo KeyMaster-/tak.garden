@@ -1,0 +1,12 @@
+# Todo
+x Make display a proper class
+. Make board + ranks/files a grid layout, instead of nested bi-directional flex
+. Expand setup notes
+. Fix WasmPackPlugin folder creation not creating a sub-folder along a path
+  at WasmPackPlugin._makeEmpty (/home/tilman/tak.garden/tak-garden-client/node_modules/@wasm-tool/wasm-pack-plugin/plugin.js:98:10)
+  at WasmPackPlugin.apply (/home/tilman/tak.garden/tak-garden-client/node_modules/@wasm-tool/wasm-pack-plugin/plugin.js:52:10)
+
+# Setup notes
+Install wasm-pack
+Install npm
+npm install

@@ -1,0 +1,17 @@
+[package]
+name = "tak_garden_server"
+version = "0.1.0"
+authors = ["Tilman Schmidt <AccessKeymaster@gmx.net>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "0.2", features = ["full"] }
+warp = "0.2"
+futures = "0.3"
+rustak = { path = "../../rustak" }
+tak-garden-common = { path = "../tak-garden-common" }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_cbor = "0.11"
