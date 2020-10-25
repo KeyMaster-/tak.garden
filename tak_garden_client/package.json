@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "scripts": {
     "build": "rimraf out/dist out/pkg && webpack",
-    "build_copy": "rimraf out/dist out/pkg && webpack && rimraf ../tak-garden-server/dist && cp -r out/dist ../tak-garden-server"
+    "build_copy": "rimraf out/dist out/pkg && webpack && rimraf ../tak_garden_server/dist && cp -r out/dist ../tak_garden_server"
   },
   "devDependencies": {
     "@wasm-tool/wasm-pack-plugin": "^1.1.0",

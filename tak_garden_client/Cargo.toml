@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 default = ["console_error_panic_hook"]
 
 [dependencies]
-tak-garden-common = { path = "../tak-garden-common" }
+tak_garden_common = { path = "../tak_garden_common" }
 rustak = { path = "../../rustak" }
 
 wasm-bindgen = "0.2.63"
