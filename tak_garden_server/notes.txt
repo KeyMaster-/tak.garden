@@ -45,6 +45,11 @@ For local development testing. Roughly mirrors the eventual deployed setup.
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
+
+        # By default, connections time out after 60s of no activity.
+        # 1 hour seems reasonable for now.
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
       }
     }
     ```
@@ -163,6 +168,11 @@ For hosting the actual server and make it accessible over the internet.
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
+
+        # By default, connections time out after 60s of no activity.
+        # 1 hour seems reasonable for now.
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
       }
     }
     ```
