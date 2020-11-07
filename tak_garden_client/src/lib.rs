@@ -1,8 +1,11 @@
 mod utils;
 
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
+use web_sys::{Element, HtmlElement};
 use tak_garden_common::{ServerMessage, ClientMessage};
-use rustak::{Color, BoardSize, Game};
+use rustak::{Game, BoardSize, Color, StoneKind, GameState, WinKind, file_idx_to_char};
+use std::fmt::Write;
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
 // allocator.
@@ -16,21 +19,13 @@ extern "C" {
   fn log(s: &str);
 }
 
-macro_rules! console_log {
-  ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
+#[wasm_bindgen(start)]
+pub fn start() {
+  utils::set_panic_hook();
 }
 
-#[wasm_bindgen(module = "/js/display.js")]
-extern "C" {
-  pub type Display;
-
-  #[wasm_bindgen(method)]
-  fn set_action_response(this: &Display, msg: &str);
-  #[wasm_bindgen(method)]
-  fn set_player_status(this: &Display, msg: &str);
-
-  #[wasm_bindgen(method)]
-  fn set_game_state(this: &Display, state: JsValue);
+macro_rules! console_log {
+  ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
 }
 
 #[wasm_bindgen(module = "/js/connection.js")]
@@ -43,45 +38,204 @@ extern "C" {
 
 #[wasm_bindgen]
 pub struct Client {
-  display: Display,
   connection: Connection,
   game: Option<Game>
+}
+
+fn clear_children(el: &Element) -> Result<(), wasm_bindgen::JsValue> {
+  while let Some(child) = el.last_child() {
+    el.remove_child(&child).map(|_| ())?;
+  }
+
+  Ok(())
 }
 
 #[wasm_bindgen]
 impl Client {
   #[wasm_bindgen(constructor)]
-  pub fn new(display: Display, connection: Connection) -> Self {
+  pub fn new(connection: Connection) -> Self {
     Self {
-      display,
       connection,
       game: None
     }
   }
 
   pub fn on_message(&mut self, msg: &[u8]) {
-    let res = self.on_message_internal(msg);
-    if let Err(e) = res {
+    let msg: Result<ServerMessage, _> = serde_cbor::from_slice(msg);
+    if let Err(e) = &msg {
+      console_log!("Could not deserialize game message {:?}: {:?}", msg, e);
+      return;
+    }
+    let msg = msg.unwrap();
+    let process_res = self.on_message_internal(msg.clone());
+
+    if let Err(e) = process_res {
       console_log!("Error processing the game message {:?}: {:?}", msg, e);
     }
   }
 
-  fn on_message_internal(&mut self, msg: &[u8]) -> Result<(), ()> { // TODO better error type
-    let msg: ServerMessage = serde_cbor::de::from_slice(msg).map_err(|_| ())?;
+  fn on_message_internal(&mut self, msg: ServerMessage) -> Result<(), JsValue> { // TODO better error type
     match msg {
-      ServerMessage::Control(color_opt) => self.display.set_player_status(&control_message(color_opt)),
-      ServerMessage::ActionInvalid(reason) => self.display.set_action_response(&reason),
+      ServerMessage::Control(color_opt) => {
+        let window = web_sys::window().expect("Couldn't get window");
+        let document = window.document().expect("Couldn't get document");
+        let player_status: HtmlElement = document.get_element_by_id("player_status").expect("Couldn't find 'player_status' element").dyn_into()?;
+        player_status.set_inner_text(&control_message(color_opt));
+
+        // TODO consolidate callsites for this logic.
+        // This is here because we might not have had text in the output before, in which case this changes the available height for the board
+        self.adjust_board_width()?;
+      },
+      ServerMessage::ActionInvalid(reason) => {
+        let window = web_sys::window().expect("Couldn't get window");
+        let document = window.document().expect("Couldn't get document");
+        let output: HtmlElement = document.get_element_by_id("output").expect("Couldn't find 'output' element").dyn_into()?;
+        output.set_inner_text(&reason);
+
+        // TODO consolidate callsites for this logic. See above.
+        self.adjust_board_width()?;
+      },
       ServerMessage::GameState(game) => {
         self.game = Some(game);
 
-        // TODO hand-rolled rust->JsValue conversion based on this serde code
-        // Compact down stone kind/color enums, turn the grid into a 2d array for nicer access
-        let js_game_state = serde_wasm_bindgen::to_value(self.game.as_ref().unwrap());
-        if let Ok(js_game_state) = js_game_state {
-          self.display.set_game_state(js_game_state);
+        let game = self.game.as_ref().unwrap();
+        let board_size = game.board().size().get();
+
+        let window = web_sys::window().expect("Couldn't get window");
+        let document = window.document().expect("Couldn't get document");
+
+        // set board wrapper classes
+        let board_wrapper = document.get_element_by_id("board-wrapper").expect("Couldn't get board-wrapper div");
+        board_wrapper.set_class_name("");
+        board_wrapper.class_list().add_2("board-wrapper", &format!("size-{}", board_size))?;
+
+        // re-populate spaces divs
+        let spaces = document.get_element_by_id("spaces").expect("Couldn't get spaces div");
+        clear_children(&spaces)?;
+
+        for row in 0..board_size {
+          for col in 0..board_size {
+            let color_class = if (col + (row % 2)) % 2 == 0 {
+              "dark"
+            } else {
+              "light"
+            };
+
+            let space = document.create_element("div")?;
+            space.class_list().add_2("space", color_class)?;
+            spaces.append_child(&space)?;
+          }
         }
+
+        // re-populate ranks
+        let ranks = document.get_element_by_id("ranks").expect("Couldn't get ranks div");
+        clear_children(&ranks)?;
+        for rank in (1..=board_size).rev() {
+          let rank_el: HtmlElement = document.create_element("div")?.dyn_into()?;
+          rank_el.set_inner_text(&rank.to_string());
+          ranks.append_child(&rank_el)?;
+        }
+
+        // re-populate files
+        let files = document.get_element_by_id("files").expect("Couldn't get files div");
+        clear_children(&files)?;
+        for file in 0..board_size {
+          let file_el: HtmlElement = document.create_element("div")?.dyn_into()?;
+          file_el.set_inner_text(&file_idx_to_char(file).unwrap().to_string());
+          files.append_child(&file_el)?;
+        }
+
+        // set up stones
+        let stones = document.get_element_by_id("stones").expect("Couldn't get stones div");
+        clear_children(&stones)?;
+
+        for x in 0..board_size {
+          for y in 0..board_size {
+            let stack = game.board().get(x, y);
+
+            for (idx, stone) in stack.iter().enumerate() {
+              let color_class = match stone.color {
+                Color::White => "light",
+                Color::Black => "dark"
+              };
+
+              let kind_class = match stone.kind {
+                StoneKind::FlatStone => None,
+                StoneKind::StandingStone => Some("standing"),
+                StoneKind::Capstone => Some("cap")
+              };
+
+              let z = if stone.kind == StoneKind::FlatStone {
+                idx
+              } else {
+                // standing and cap stones should be centered on the stone below them, 
+                // so draw them at z-1 so they get the same vertical offset as the stone below them
+                idx.saturating_sub(1) // don't go below 0
+              };
+
+              let wrapper: HtmlElement = document.create_element("div")?.dyn_into()?;
+              wrapper.class_list().add_1("stone-wrapper")?;
+
+              let transform_x = x * 100;
+              let transform_y = (y as isize) * -100 + (z as isize) * -7;
+              wrapper.style().set_property("transform", &format!("translate({}%, {}%)", transform_x, transform_y))?;
+
+              let stone_el = document.create_element("div")?;
+              stone_el.class_list().add_2("stone", color_class)?;
+
+              if let Some(kind_class) = kind_class {
+                stone_el.class_list().add_1(kind_class)?;
+              }
+
+              wrapper.append_child(&stone_el)?;
+              stones.append_child(&wrapper)?;
+            }
+          }
+        }
+
+        let get_status_text = || -> Result<String, std::fmt::Error> {
+          let mut status_text = String::new();
+          match game.state() {
+            GameState::Ongoing => { write!(&mut status_text, "Turn {}, {}'s go.", game.turn(), game.active_color())?; },
+            GameState::Draw => { write!(&mut status_text, "Draw.")?; },
+            GameState::Win(color, kind) => {
+              write!(&mut status_text, "{} wins ", color)?;
+              match kind {
+                WinKind::Road => write!(&mut status_text, "by road."),
+                WinKind::BoardFilled => write!(&mut status_text, "by flats (board full)."),
+                WinKind::PlayedAllStones(color) => write!(&mut status_text, "by flats ({} played all stones).", color)
+              }?;
+            }
+          }
+          Ok(status_text)
+        };
+
+        let status_text = get_status_text().expect("Couldn't write status text");
+
+        let game_status = document.get_element_by_id("game_status").expect("Couldn't get game_status div");
+        let game_status: HtmlElement = game_status.dyn_into()?;
+        game_status.set_inner_text(&status_text);
+
+        let stone_counter_light_flat = document.get_element_by_id("stone-counter-light-flat").expect("Couldn't get stone-counter-light-flat div");
+        let stone_counter_light_flat: HtmlElement = stone_counter_light_flat.dyn_into()?;
+        stone_counter_light_flat.set_inner_text(&(game.held_stones().get(Color::White).flat().to_string()));
+
+        let stone_counter_light_cap = document.get_element_by_id("stone-counter-light-cap").expect("Couldn't get stone-counter-light-cap div");
+        let stone_counter_light_cap: HtmlElement = stone_counter_light_cap.dyn_into()?;
+        stone_counter_light_cap.set_inner_text(&(game.held_stones().get(Color::White).capstone().to_string()));
+
+        let stone_counter_dark_flat = document.get_element_by_id("stone-counter-dark-flat").expect("Couldn't get stone-counter-dark-flat div");
+        let stone_counter_dark_flat: HtmlElement = stone_counter_dark_flat.dyn_into()?;
+        stone_counter_dark_flat.set_inner_text(&(game.held_stones().get(Color::Black).flat().to_string()));
+
+        let stone_counter_dark_cap = document.get_element_by_id("stone-counter-dark-cap").expect("Couldn't get stone-counter-dark-cap div");
+        let stone_counter_dark_cap: HtmlElement = stone_counter_dark_cap.dyn_into()?;
+        stone_counter_dark_cap.set_inner_text(&(game.held_stones().get(Color::Black).capstone().to_string()));
+
+        self.adjust_board_width()?;
       }
     }
+
     Ok(())
   }
 
@@ -130,6 +284,31 @@ impl Client {
     }
 
     self.connection.send_message(&msg_binary_res.unwrap());
+  }
+
+  pub fn adjust_board_width(&self)->Result<(), JsValue> {
+    if self.game.is_none() {
+      return Ok(());
+    }
+    let game = self.game.as_ref().unwrap();
+    let board_size = game.board().size().get() as i32;
+
+    let window = web_sys::window().expect("Couldn't get window");
+    let document = window.document().expect("Couldn't get document");
+
+    let files = document.get_element_by_id("files").expect("Couldn't get files div");
+    let ranks = document.get_element_by_id("ranks").expect("Couldn't get ranks div");
+    let board_wrapper = document.get_element_by_id("board-wrapper").expect("Couldn't get board-wrapper div");
+    let board_wrapper: HtmlElement = board_wrapper.dyn_into()?;
+
+    let files_height = files.children().item(0).unwrap().client_height();
+    let ranks_width = ranks.client_width();
+    let square_size = (board_wrapper.offset_height() - files_height) / (board_size + 1);
+    let target_width = square_size * board_size + ranks_width;
+
+    board_wrapper.style().set_property("width", &(target_width.to_string()))?;
+
+    Ok(())
   }
 }
 

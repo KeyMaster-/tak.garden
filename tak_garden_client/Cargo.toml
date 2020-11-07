@@ -16,6 +16,8 @@ rustak = { path = "../../rustak" }
 
 wasm-bindgen = "0.2.63"
 
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "Node", "DomTokenList", "HtmlElement", "HtmlCollection", "CssStyleDeclaration"]}
+
 # The `console_error_panic_hook` crate provides better debugging of panics by
 # logging them with `console.error`. This is great for development, but requires
 # all the `std::fmt` and `std::panicking` infrastructure, so isn't great for
@@ -31,7 +33,6 @@ wee_alloc = { version = "0.4.5", optional = true }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_cbor = "0.11"
-serde-wasm-bindgen = "0.1"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3.13"
