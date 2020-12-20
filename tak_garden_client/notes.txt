@@ -6,8 +6,14 @@ x Make board + ranks/files a grid layout, instead of nested bi-directional flex
   . Get click events on spaces
   . Get space coord in click callback
   . Forward events to rust
-  . Partial moves in rust
+  . Generate valid click spaces for given move state, without undo
+  . Convert click events to move actions and apply
+    Do the above two with a state machine. Input is always click(loc), result is state changes roughly matching move states
   . Display of partial move states
+    Mainly floating carry stack
+  . Finalise move
+    For now with its own special button
+
 
 . Handle stack heights that would overflow to the space above
   ptn.ninja does a side-stack for other than the top x stones, where x is the carry limit 
