@@ -5,7 +5,10 @@ use wasm_bindgen::JsCast;
 use web_sys::{Element, HtmlElement};
 use tak_garden_common::{ServerMessage, ClientMessage};
 use rustak::{Game, BoardSize, Color, StoneKind, GameState, WinKind, file_idx_to_char};
+use rustak::{Move, Location}; // TODO temp
 use std::fmt::Write;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
 // allocator.
@@ -39,7 +42,7 @@ extern "C" {
 #[wasm_bindgen]
 pub struct Client {
   connection: Connection,
-  game: Option<Game>,
+  game: Option<Rc<RefCell<Game>>>,
   click_closures: Vec<Closure<dyn Fn()>>
 }
 
@@ -51,8 +54,15 @@ fn clear_children(el: &Element) -> Result<(), wasm_bindgen::JsValue> {
   Ok(())
 }
 
-fn on_click(x: usize, y: usize) {
+fn on_click(game: Rc<RefCell<Game>>, x: usize, y: usize) {
   console_log!("Click on ({}, {})", x, y);
+
+  {
+    let mut mut_game = game.borrow_mut();
+    let m = Move::Placement { kind: StoneKind::FlatStone, location: Location::from_coords(x, y).unwrap() };
+    mut_game.make_move(m);
+    console_log!("game state: {}", mut_game);
+  }
 }
 
 #[wasm_bindgen]
@@ -102,7 +112,7 @@ impl Client {
         self.adjust_board_width()?;
       },
       ServerMessage::GameState(game) => {
-        self.game = Some(game);
+        self.game = Some(Rc::new(RefCell::new(game)));
         self.update_display()?;
       }
     }
@@ -111,7 +121,7 @@ impl Client {
   }
 
   fn update_display(&mut self) -> Result<(), JsValue> {
-    let game = self.game.as_ref().unwrap();
+    let game = self.game.as_ref().unwrap().borrow();
     let board_size = game.board().size().get();
 
     let window = web_sys::window().expect("Couldn't get window");
@@ -141,8 +151,9 @@ impl Client {
           // TODO it's unnecessary to re-create a callback each time we get new board state
           // Profile if this creates substantial memory churn, and if so change it to cache them and only re-create
           // if the board size changes. (Having a specific phase for that would allow us to get rid of various repeated work anyway)
+        let game_rc = self.game.as_ref().unwrap().clone();
         let callback = Closure::wrap(Box::new(move || {
-          on_click(col, (board_size - 1) - row);
+          on_click(game_rc.clone(), col, (board_size - 1) - row); // I don't quite understand why this clone() is necessary, but without it the closure is treated as FnOnce (you get better errors when this isn't in a loop)
         }) as Box<dyn Fn()>);
 
         space.set_onclick(Some(callback.as_ref().unchecked_ref())); // as_ref().unchecked_ref() converts gets &Function from Closure
@@ -312,7 +323,7 @@ impl Client {
     if self.game.is_none() {
       return Ok(());
     }
-    let game = self.game.as_ref().unwrap();
+    let game = self.game.as_ref().unwrap().borrow();
     let board_size = game.board().size().get() as i32;
 
     let window = web_sys::window().expect("Couldn't get window");
