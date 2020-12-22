@@ -139,6 +139,8 @@ For hosting the actual server and make it accessible over the internet.
     ```
   `sudo service tak.garden start`
     Start the server service
+  `systemctl enable tak.garden`
+    Set the service to be started on system boot
   `sudo apt install nginx-light`
     Install the nginx server. We'll use this as the web-facing server, which then acts
     as a reverse proxy to the rust web server.
