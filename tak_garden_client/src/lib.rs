@@ -39,7 +39,8 @@ extern "C" {
 #[wasm_bindgen]
 pub struct Client {
   connection: Connection,
-  game: Option<Game>
+  game: Option<Game>,
+  click_closures: Vec<Closure<dyn Fn()>>
 }
 
 fn clear_children(el: &Element) -> Result<(), wasm_bindgen::JsValue> {
@@ -50,13 +51,18 @@ fn clear_children(el: &Element) -> Result<(), wasm_bindgen::JsValue> {
   Ok(())
 }
 
+fn on_click(x: usize, y: usize) {
+  console_log!("Click on ({}, {})", x, y);
+}
+
 #[wasm_bindgen]
 impl Client {
   #[wasm_bindgen(constructor)]
   pub fn new(connection: Connection) -> Self {
     Self {
       connection,
-      game: None
+      game: None,
+      click_closures: vec![]
     }
   }
 
@@ -97,144 +103,160 @@ impl Client {
       },
       ServerMessage::GameState(game) => {
         self.game = Some(game);
-
-        let game = self.game.as_ref().unwrap();
-        let board_size = game.board().size().get();
-
-        let window = web_sys::window().expect("Couldn't get window");
-        let document = window.document().expect("Couldn't get document");
-
-        // set board wrapper classes
-        let board_wrapper = document.get_element_by_id("board-wrapper").expect("Couldn't get board-wrapper div");
-        board_wrapper.set_class_name("");
-        board_wrapper.class_list().add_2("board-wrapper", &format!("size-{}", board_size))?;
-
-        // re-populate spaces divs
-        let spaces = document.get_element_by_id("spaces").expect("Couldn't get spaces div");
-        clear_children(&spaces)?;
-
-        for row in 0..board_size {
-          for col in 0..board_size {
-            let color_class = if (col + (row % 2)) % 2 == 0 {
-              "dark"
-            } else {
-              "light"
-            };
-
-            let space = document.create_element("div")?;
-            space.class_list().add_2("space", color_class)?;
-            spaces.append_child(&space)?;
-          }
-        }
-
-        // re-populate ranks
-        let ranks = document.get_element_by_id("ranks").expect("Couldn't get ranks div");
-        clear_children(&ranks)?;
-        for rank in (1..=board_size).rev() {
-          let rank_el: HtmlElement = document.create_element("div")?.dyn_into()?;
-          rank_el.set_inner_text(&rank.to_string());
-          ranks.append_child(&rank_el)?;
-        }
-
-        // re-populate files
-        let files = document.get_element_by_id("files").expect("Couldn't get files div");
-        clear_children(&files)?;
-        for file in 0..board_size {
-          let file_el: HtmlElement = document.create_element("div")?.dyn_into()?;
-          file_el.set_inner_text(&file_idx_to_char(file).unwrap().to_string());
-          files.append_child(&file_el)?;
-        }
-
-        // set up stones
-        let stones = document.get_element_by_id("stones").expect("Couldn't get stones div");
-        clear_children(&stones)?;
-
-        for x in 0..board_size {
-          for y in 0..board_size {
-            let stack = game.board().get(x, y);
-
-            for (idx, stone) in stack.iter().enumerate() {
-              let color_class = match stone.color {
-                Color::White => "light",
-                Color::Black => "dark"
-              };
-
-              let kind_class = match stone.kind {
-                StoneKind::FlatStone => None,
-                StoneKind::StandingStone => Some("standing"),
-                StoneKind::Capstone => Some("cap")
-              };
-
-              let z = if stone.kind == StoneKind::FlatStone {
-                idx
-              } else {
-                // standing and cap stones should be centered on the stone below them, 
-                // so draw them at z-1 so they get the same vertical offset as the stone below them
-                idx.saturating_sub(1) // don't go below 0
-              };
-
-              let wrapper: HtmlElement = document.create_element("div")?.dyn_into()?;
-              wrapper.class_list().add_1("stone-wrapper")?;
-
-              let transform_x = x * 100;
-              let transform_y = (y as isize) * -100 + (z as isize) * -7;
-              wrapper.style().set_property("transform", &format!("translate({}%, {}%)", transform_x, transform_y))?;
-
-              let stone_el = document.create_element("div")?;
-              stone_el.class_list().add_2("stone", color_class)?;
-
-              if let Some(kind_class) = kind_class {
-                stone_el.class_list().add_1(kind_class)?;
-              }
-
-              wrapper.append_child(&stone_el)?;
-              stones.append_child(&wrapper)?;
-            }
-          }
-        }
-
-        let get_status_text = || -> Result<String, std::fmt::Error> {
-          let mut status_text = String::new();
-          match game.state() {
-            GameState::Ongoing => { write!(&mut status_text, "Turn {}, {}'s go.", game.turn(), game.active_color())?; },
-            GameState::Draw => { write!(&mut status_text, "Draw.")?; },
-            GameState::Win(color, kind) => {
-              write!(&mut status_text, "{} wins ", color)?;
-              match kind {
-                WinKind::Road => write!(&mut status_text, "by road."),
-                WinKind::BoardFilled => write!(&mut status_text, "by flats (board full)."),
-                WinKind::PlayedAllStones(color) => write!(&mut status_text, "by flats ({} played all stones).", color)
-              }?;
-            }
-          }
-          Ok(status_text)
-        };
-
-        let status_text = get_status_text().expect("Couldn't write status text");
-
-        let game_status = document.get_element_by_id("game_status").expect("Couldn't get game_status div");
-        let game_status: HtmlElement = game_status.dyn_into()?;
-        game_status.set_inner_text(&status_text);
-
-        let stone_counter_light_flat = document.get_element_by_id("stone-counter-light-flat").expect("Couldn't get stone-counter-light-flat div");
-        let stone_counter_light_flat: HtmlElement = stone_counter_light_flat.dyn_into()?;
-        stone_counter_light_flat.set_inner_text(&(game.held_stones().get(Color::White).flat().to_string()));
-
-        let stone_counter_light_cap = document.get_element_by_id("stone-counter-light-cap").expect("Couldn't get stone-counter-light-cap div");
-        let stone_counter_light_cap: HtmlElement = stone_counter_light_cap.dyn_into()?;
-        stone_counter_light_cap.set_inner_text(&(game.held_stones().get(Color::White).capstone().to_string()));
-
-        let stone_counter_dark_flat = document.get_element_by_id("stone-counter-dark-flat").expect("Couldn't get stone-counter-dark-flat div");
-        let stone_counter_dark_flat: HtmlElement = stone_counter_dark_flat.dyn_into()?;
-        stone_counter_dark_flat.set_inner_text(&(game.held_stones().get(Color::Black).flat().to_string()));
-
-        let stone_counter_dark_cap = document.get_element_by_id("stone-counter-dark-cap").expect("Couldn't get stone-counter-dark-cap div");
-        let stone_counter_dark_cap: HtmlElement = stone_counter_dark_cap.dyn_into()?;
-        stone_counter_dark_cap.set_inner_text(&(game.held_stones().get(Color::Black).capstone().to_string()));
-
-        self.adjust_board_width()?;
+        self.update_display()?;
       }
     }
+
+    Ok(())
+  }
+
+  fn update_display(&mut self) -> Result<(), JsValue> {
+    let game = self.game.as_ref().unwrap();
+    let board_size = game.board().size().get();
+
+    let window = web_sys::window().expect("Couldn't get window");
+    let document = window.document().expect("Couldn't get document");
+
+    // set board wrapper classes
+    let board_wrapper = document.get_element_by_id("board-wrapper").expect("Couldn't get board-wrapper div");
+    board_wrapper.set_class_name("");
+    board_wrapper.class_list().add_2("board-wrapper", &format!("size-{}", board_size))?;
+
+    // re-populate spaces divs
+    let spaces = document.get_element_by_id("spaces").expect("Couldn't get spaces div");
+    clear_children(&spaces)?;
+    self.click_closures.clear();
+
+    for row in 0..board_size {
+      for col in 0..board_size {
+        let color_class = if (col + (row % 2)) % 2 == 0 {
+          "dark"
+        } else {
+          "light"
+        };
+
+        let space: HtmlElement = document.create_element("div")?.dyn_into()?;
+        space.class_list().add_2("space", color_class)?;
+
+          // TODO it's unnecessary to re-create a callback each time we get new board state
+          // Profile if this creates substantial memory churn, and if so change it to cache them and only re-create
+          // if the board size changes. (Having a specific phase for that would allow us to get rid of various repeated work anyway)
+        let callback = Closure::wrap(Box::new(move || {
+          on_click(col, (board_size - 1) - row);
+        }) as Box<dyn Fn()>);
+
+        space.set_onclick(Some(callback.as_ref().unchecked_ref())); // as_ref().unchecked_ref() converts gets &Function from Closure
+        self.click_closures.push(callback);
+        spaces.append_child(&space)?;
+      }
+    }
+
+    // re-populate ranks
+    let ranks = document.get_element_by_id("ranks").expect("Couldn't get ranks div");
+    clear_children(&ranks)?;
+    for rank in (1..=board_size).rev() {
+      let rank_el: HtmlElement = document.create_element("div")?.dyn_into()?;
+      rank_el.set_inner_text(&rank.to_string());
+      ranks.append_child(&rank_el)?;
+    }
+
+    // re-populate files
+    let files = document.get_element_by_id("files").expect("Couldn't get files div");
+    clear_children(&files)?;
+    for file in 0..board_size {
+      let file_el: HtmlElement = document.create_element("div")?.dyn_into()?;
+      file_el.set_inner_text(&file_idx_to_char(file).unwrap().to_string());
+      files.append_child(&file_el)?;
+    }
+
+    // set up stones
+    let stones = document.get_element_by_id("stones").expect("Couldn't get stones div");
+    clear_children(&stones)?;
+
+    for x in 0..board_size {
+      for y in 0..board_size {
+        let stack = game.board().get(x, y);
+
+        for (idx, stone) in stack.iter().enumerate() {
+          let color_class = match stone.color {
+            Color::White => "light",
+            Color::Black => "dark"
+          };
+
+          let kind_class = match stone.kind {
+            StoneKind::FlatStone => None,
+            StoneKind::StandingStone => Some("standing"),
+            StoneKind::Capstone => Some("cap")
+          };
+
+          let z = if stone.kind == StoneKind::FlatStone {
+            idx
+          } else {
+            // standing and cap stones should be centered on the stone below them, 
+            // so draw them at z-1 so they get the same vertical offset as the stone below them
+            idx.saturating_sub(1) // don't go below 0
+          };
+
+          let wrapper: HtmlElement = document.create_element("div")?.dyn_into()?;
+          wrapper.class_list().add_1("stone-wrapper")?;
+
+          let transform_x = x * 100;
+          let transform_y = (y as isize) * -100 + (z as isize) * -7;
+          wrapper.style().set_property("transform", &format!("translate({}%, {}%)", transform_x, transform_y))?;
+
+          let stone_el = document.create_element("div")?;
+          stone_el.class_list().add_2("stone", color_class)?;
+
+          if let Some(kind_class) = kind_class {
+            stone_el.class_list().add_1(kind_class)?;
+          }
+
+          wrapper.append_child(&stone_el)?;
+          stones.append_child(&wrapper)?;
+        }
+      }
+    }
+
+    let get_status_text = || -> Result<String, std::fmt::Error> {
+      let mut status_text = String::new();
+      match game.state() {
+        GameState::Ongoing => { write!(&mut status_text, "Turn {}, {}'s go.", game.turn(), game.active_color())?; },
+        GameState::Draw => { write!(&mut status_text, "Draw.")?; },
+        GameState::Win(color, kind) => {
+          write!(&mut status_text, "{} wins ", color)?;
+          match kind {
+            WinKind::Road => write!(&mut status_text, "by road."),
+            WinKind::BoardFilled => write!(&mut status_text, "by flats (board full)."),
+            WinKind::PlayedAllStones(color) => write!(&mut status_text, "by flats ({} played all stones).", color)
+          }?;
+        }
+      }
+      Ok(status_text)
+    };
+
+    let status_text = get_status_text().expect("Couldn't write status text");
+
+    let game_status = document.get_element_by_id("game_status").expect("Couldn't get game_status div");
+    let game_status: HtmlElement = game_status.dyn_into()?;
+    game_status.set_inner_text(&status_text);
+
+    let stone_counter_light_flat = document.get_element_by_id("stone-counter-light-flat").expect("Couldn't get stone-counter-light-flat div");
+    let stone_counter_light_flat: HtmlElement = stone_counter_light_flat.dyn_into()?;
+    stone_counter_light_flat.set_inner_text(&(game.held_stones().get(Color::White).flat().to_string()));
+
+    let stone_counter_light_cap = document.get_element_by_id("stone-counter-light-cap").expect("Couldn't get stone-counter-light-cap div");
+    let stone_counter_light_cap: HtmlElement = stone_counter_light_cap.dyn_into()?;
+    stone_counter_light_cap.set_inner_text(&(game.held_stones().get(Color::White).capstone().to_string()));
+
+    let stone_counter_dark_flat = document.get_element_by_id("stone-counter-dark-flat").expect("Couldn't get stone-counter-dark-flat div");
+    let stone_counter_dark_flat: HtmlElement = stone_counter_dark_flat.dyn_into()?;
+    stone_counter_dark_flat.set_inner_text(&(game.held_stones().get(Color::Black).flat().to_string()));
+
+    let stone_counter_dark_cap = document.get_element_by_id("stone-counter-dark-cap").expect("Couldn't get stone-counter-dark-cap div");
+    let stone_counter_dark_cap: HtmlElement = stone_counter_dark_cap.dyn_into()?;
+    stone_counter_dark_cap.set_inner_text(&(game.held_stones().get(Color::Black).capstone().to_string()));
+
+    self.adjust_board_width()?;
 
     Ok(())
   }

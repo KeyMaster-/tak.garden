@@ -3,7 +3,7 @@ x Make display a proper class
 x Make board + ranks/files a grid layout, instead of nested bi-directional flex
 . Cache container divs in rust side
 . Implement click moves
-  . Get click events on spaces
+  x Get click events on spaces
   . Get space coord in click callback
   . Forward events to rust
   . Generate valid click spaces for given move state, without undo
