@@ -4,8 +4,8 @@ x Make board + ranks/files a grid layout, instead of nested bi-directional flex
 . Cache container divs in rust side
 . Implement click moves
   x Get click events on spaces
-  . Get space coord in click callback
-  . Forward events to rust
+  x Get space coord in click callback
+  x Forward events to rust
   . Generate valid click spaces for given move state, without undo
   . Convert click events to move actions and apply
     Do the above two with a state machine. Input is always click(loc), result is state changes roughly matching move states
