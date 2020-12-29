@@ -22,14 +22,10 @@ extern "C" {
   fn log(s: &str);
 }
 
-#[wasm_bindgen(start)]
-pub fn start() {
-  utils::set_panic_hook();
-}
-
 macro_rules! console_log {
   ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
 }
+
 
 #[wasm_bindgen(module = "/js/connection.js")]
 extern "C" {
@@ -39,47 +35,78 @@ extern "C" {
   fn send_message(this: &Connection, msg: &[u8]);
 }
 
+#[wasm_bindgen(start)]
+pub fn start() {
+  utils::set_panic_hook();
+}
+
 #[wasm_bindgen]
-pub struct Client {
-  connection: Connection,
-  game: Option<Rc<RefCell<Game>>>,
-  display: Display,
+pub fn init(connection: Connection) -> ClientInterface {
+  let client = Client::new(connection);
+  let client_ref = Rc::new(RefCell::new(client));
+  let display = Display::new(client_ref.clone());
+  client_ref.borrow_mut().set_display(display);
+
+  ClientInterface::new(client_ref)
 }
 
-struct DisplayData {
-  click_closures: Vec<Closure<dyn Fn()>>
+#[wasm_bindgen]
+pub struct ClientInterface(Rc<RefCell<Client>>);
+
+impl ClientInterface {
+  fn new(client_ref: Rc<RefCell<Client>>) -> Self {
+    Self(client_ref)
+  }
 }
 
-#[derive(Clone)]
-struct Display(Rc<RefCell<DisplayData>>);
-
-fn clear_children(el: &Element) -> Result<(), wasm_bindgen::JsValue> {
-  while let Some(child) = el.last_child() {
-    el.remove_child(&child).map(|_| ())?;
+#[wasm_bindgen]
+impl ClientInterface {
+  pub fn on_message(&self, msg: &[u8]) {
+    self.0.borrow_mut().on_message(msg);
   }
 
-  Ok(())
+  pub fn submit_action(&self, msg: &str) {
+    self.0.borrow().submit_action(msg);
+  }
+
+    // TODO this should just go to the view directly
+  pub fn adjust_board_width(&self) -> Result<(), JsValue> {
+    self.0.borrow().adjust_board_width()
+  }
 }
 
-#[wasm_bindgen]
+struct Client {
+  connection: Connection,
+  game: Option<Game>,
+  display: Option<Display>, // Is only None before Client is fully initialised. TODO replace with LateInit from once_cell (given in docs)
+}
+
+struct Display {
+  client_ref: Rc<RefCell<Client>>,
+  click_closures: Vec<Closure<dyn Fn()>>,
+}
+
 impl Client {
-  #[wasm_bindgen(constructor)]
-  pub fn new(connection: Connection) -> Self {
+  fn new(connection: Connection) -> Self {
     Self {
       connection,
       game: None,
-      display: Display::new()
+      display: None
     }
   }
 
-  pub fn on_message(&mut self, msg: &[u8]) {
+  fn set_display(&mut self, display: Display) {
+    self.display = Some(display);
+  }
+
+  fn on_message(&mut self, msg: &[u8]) {
     let msg: Result<ServerMessage, _> = serde_cbor::from_slice(msg);
     if let Err(e) = &msg {
       console_log!("Could not deserialize game message {:?}: {:?}", msg, e);
       return;
     }
     let msg = msg.unwrap();
-    let process_res = self.on_message_internal(msg.clone());
+    let process_res = self.on_message_internal(msg.clone()); // TODO just make this a local closure instead of a separate member function
 
     if let Err(e) = process_res {
       console_log!("Error processing the game message {:?}: {:?}", msg, e);
@@ -108,15 +135,21 @@ impl Client {
         self.adjust_board_width()?;
       },
       ServerMessage::GameState(game) => {
-        self.game = Some(Rc::new(RefCell::new(game)));
-        self.display.update_display(self.game.as_ref().unwrap().clone())?;
+        self.game = Some(game);
+        self.display.as_mut().unwrap().update_display(self.game.as_ref().unwrap())?;
       }
     }
 
     Ok(())
   }
 
-  pub fn submit_action(&self, msg: &str) {
+  fn on_click(&mut self, x: usize, y: usize) {
+    let m = Move::Placement { kind: StoneKind::FlatStone, location: Location::from_coords(x, y).unwrap() };
+    self.game.as_mut().unwrap().make_move(m);
+    self.display.as_mut().unwrap().update_display(self.game.as_ref().unwrap());
+  }
+
+  fn submit_action(&self, msg: &str) {
     if msg.starts_with("ctrl: ") {
       let ctrl_text = &msg[6..];
       if ctrl_text.starts_with("new ") {
@@ -163,10 +196,9 @@ impl Client {
     self.connection.send_message(&msg_binary_res.unwrap());
   }
 
-  pub fn adjust_board_width(&self)->Result<(), JsValue> {
-    if let Some(game_rc) = self.game.as_ref() {
-
-      Display::adjust_board_width(game_rc.borrow().board().size())
+  fn adjust_board_width(&self)->Result<(), JsValue> {
+    if let Some(game) = self.game.as_ref() {
+      Display::adjust_board_width(game.board().size())
     } else {
       Ok(())
     }
@@ -181,31 +213,31 @@ fn control_message(c: Option<Color>) -> String {
   format!("You control: {}", color_str)
 }
 
-fn on_click(display: Display, game: Rc<RefCell<Game>>, x: usize, y: usize) {
+fn on_click(x: usize, y: usize, client_ref: Rc<RefCell<Client>>) {
   console_log!("Click on ({}, {})", x, y);
 
-  { // scope to limit our mutable borrow of the game
-    let mut game = game.borrow_mut();
-    let m = Move::Placement { kind: StoneKind::FlatStone, location: Location::from_coords(x, y).unwrap() };
-    game.make_move(m);
+  client_ref.borrow_mut().on_click(x, y);
+}
+
+fn clear_children(el: &Element) -> Result<(), wasm_bindgen::JsValue> {
+  while let Some(child) = el.last_child() {
+    el.remove_child(&child).map(|_| ())?;
   }
-  display.update_display(game);
+
+  Ok(())
 }
 
 impl Display {
-  fn new() -> Self {
-    Self(Rc::new(RefCell::new(DisplayData {
+  fn new(client_ref: Rc<RefCell<Client>>) -> Self {
+    Self {
+      client_ref,
       click_closures: vec![]
-    })))
+    }
   }
 
     // safety: mutably borrows its internal value
     // also immutably borrows the passed-in Rc<RefCell<Game>>
-  fn update_display(&self, game_rc: Rc<RefCell<Game>>) -> Result<(), JsValue> {
-
-    let game = game_rc.borrow();
-    let mut display_data = self.0.borrow_mut();
-
+  fn update_display(&mut self, game: &Game) -> Result<(), JsValue> {
     let board_size = game.board().size().get();
 
     let window = web_sys::window().expect("Couldn't get window");
@@ -219,7 +251,7 @@ impl Display {
     // re-populate spaces divs
     let spaces = document.get_element_by_id("spaces").expect("Couldn't get spaces div");
     clear_children(&spaces)?;
-    display_data.click_closures.clear();
+    self.click_closures.clear();
 
     for row in 0..board_size {
       for col in 0..board_size {
@@ -235,14 +267,13 @@ impl Display {
           // TODO it's unnecessary to re-create a callback each time we get new board state
           // Profile if this creates substantial memory churn, and if so change it to cache them and only re-create
           // if the board size changes. (Having a specific phase for that would allow us to get rid of various repeated work anyway)
-        let self_rc = self.clone();
-        let game_rc = game_rc.clone();
+        let client_ref = self.client_ref.clone();
         let callback = Closure::wrap(Box::new(move || {
-          on_click(self_rc.clone(), game_rc.clone(), col, (board_size - 1) - row); // I don't quite understand why this clone() is necessary, but without it the closure is treated as FnOnce (you get better errors when this isn't in a loop)
+          on_click(col, (board_size - 1) - row, client_ref.clone()); // I don't quite understand why this clone() is necessary, but without it the closure is treated as FnOnce (you get better errors when this isn't in a loop)
         }) as Box<dyn Fn()>);
 
         space.set_onclick(Some(callback.as_ref().unchecked_ref())); // as_ref().unchecked_ref() converts gets &Function from Closure
-        display_data.click_closures.push(callback);
+        self.click_closures.push(callback);
         spaces.append_child(&space)?;
       }
     }
