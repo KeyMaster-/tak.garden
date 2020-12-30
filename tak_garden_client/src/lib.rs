@@ -365,13 +365,13 @@ impl Display {
     let stones = document.get_element_by_id("stones").expect("Couldn't get stones div");
     clear_children(&stones)?;
 
-    let stone_draw_z = |idx, kind| -> usize {
+    let stone_draw_z = |logical_z, kind| -> usize {
       if kind == StoneKind::FlatStone {
-        idx
+        logical_z
       } else {
         // standing and cap stones should be centered on the stone below them, 
         // so draw them at z-1 so they get the same vertical offset as the stone below them
-        idx.saturating_sub(1) // don't go below 0
+        logical_z.saturating_sub(1) // don't go below 0
       }
     };
 
@@ -388,14 +388,14 @@ impl Display {
           StoneKind::Capstone => Some("cap")
         };
 
-        let z = base_z + stone_draw_z(idx, stone.kind);
+        let z = stone_draw_z(base_z + idx, stone.kind);
 
         let wrapper: HtmlElement = document.create_element("div")?.dyn_into()?;
         wrapper.class_list().add_1("stone-wrapper")?;
 
         let transform_x = x * 100;
         let transform_y = (y as isize) * -100 + (z as isize) * -7;
-        wrapper.style().set_property("transform", &format!("translate({}%, {}%)", transform_x, transform_y))?;
+        wrapper.style().set_property("transform", &format!("translate({}%, {}%)", transform_x, transform_y))?; // TODO add logical z transform to get correct depth sorting
 
         let stone_el = document.create_element("div")?;
         stone_el.class_list().add_2("stone", color_class)?;
@@ -414,17 +414,19 @@ impl Display {
     for x in 0..board_size {
       for y in 0..board_size {
         let stack = game.board().get(x, y);
-
         make_stack_elements(stack, x, y, 0)?;
       }
     }
 
     if let MoveState::Movement { cur_loc, carry, .. } = game.move_state() {
       let existing_stack = &game.board()[*cur_loc];
-      let stack_top_z = existing_stack.top_stone().map_or(0, |stone| stone_draw_z(existing_stack.count() - 1, stone.kind));
-      let base_z = stack_top_z + 2;
+      let base_z = 
+        if let Some(stone) = existing_stack.top_stone() {
+          stone_draw_z(existing_stack.count() - 1, stone.kind) + 2 // +2 to leave 1 stone's worth of space between what's there and what's held
+        } else {
+          1 // There's no stone below us, so just hover 1 space above the board
+        };
       make_stack_elements(carry, cur_loc.x(), cur_loc.y(), base_z)?;
-
     }
 
     let get_status_text = || -> Result<String, std::fmt::Error> {
