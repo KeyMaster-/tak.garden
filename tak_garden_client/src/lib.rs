@@ -4,8 +4,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{Element, HtmlElement};
 use tak_garden_common::{ServerMessage, ClientMessage};
-use rustak::{Game, BoardSize, Color, StoneKind, GameState, WinKind, file_idx_to_char};
-use rustak::{Move, Location}; // TODO temp
+use rustak::{Game, BoardSize, Location, Color, StoneKind, StoneStack, GameState, MoveState, MoveAction, WinKind, file_idx_to_char};
 use std::fmt::Write;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -67,6 +66,11 @@ impl ClientInterface {
 
   pub fn submit_action(&self, msg: &str) {
     self.0.borrow().submit_action(msg);
+  }
+
+    // this is to submit a partial move
+  pub fn submit_move(&self) {
+    self.0.borrow_mut().submit_move();
   }
 
     // TODO this should just go to the view directly
@@ -136,17 +140,84 @@ impl Client {
       },
       ServerMessage::GameState(game) => {
         self.game = Some(game);
-        self.display.as_mut().unwrap().update_display(self.game.as_ref().unwrap())?;
+        self.display.as_mut().unwrap().update(self.game.as_ref().unwrap())?;
       }
     }
 
     Ok(())
   }
 
-  fn on_click(&mut self, x: usize, y: usize) {
-    let m = Move::Placement { kind: StoneKind::FlatStone, location: Location::from_coords(x, y).unwrap() };
-    self.game.as_mut().unwrap().make_move(m);
-    self.display.as_mut().unwrap().update_display(self.game.as_ref().unwrap());
+  fn on_click(&mut self, click_loc: Location) {
+    if let Some(game) = &mut self.game {
+      let board = game.board();
+
+      // TODO check that it's your turn
+      match game.move_state() {
+        MoveState::Start => {
+          let target_stack = &board[click_loc];
+          if target_stack.count() == 0 {
+            // TODO check if stone type is available to place
+            let action = MoveAction::Place { loc: click_loc, kind: StoneKind::FlatStone };
+            game.do_action(action); // TODO error handling
+          } else {
+            // TODO check that we control the stack
+            // (Could also be done by ignoring the error from do_action if it's "stack not controlled". Consider it)
+            let pickup_count = std::cmp::min(target_stack.count(), board.size().get());
+            let action = MoveAction::Pickup { loc: click_loc, count: pickup_count };
+            game.do_action(action);
+          }
+        },
+        MoveState::Placed { loc, kind } => {
+          if click_loc == *loc {
+            // get placed stone type
+            // undo placement
+            // cycle stone type (flat -> standing -> cap -> flat)
+            // check if new stone type is available
+            // re-do placement with cycled stone type if so
+          } else {
+            // undo placement
+          }
+        },
+        MoveState::Movement { start, cur_loc, carry, dir, drops } => {
+          if click_loc == *cur_loc {
+            if carry.count() >= 1 {
+              let action = MoveAction::Drop { count: 1 };
+              game.do_action(action);
+            }
+          } else {
+            let valid_locs = if let Some(dir) = dir {
+              cur_loc.move_along(*dir, board.size()).iter().map(|&loc| (loc, *dir)).collect()
+            } else {
+              cur_loc.neighbours_with_direction(board.size())
+            };
+
+            if let Some((_, dir)) = valid_locs.iter().find(|(loc, dir)| *loc == click_loc) {
+              // TODO check if drop is valid? or use error reporting since it already does that logic for us
+              if carry.count() >= 1 {
+                let action = MoveAction::MoveAndDropOne { dir: *dir };
+                let res = game.do_action(action); // TODO error handling.
+                if let Err(e) = res {
+                  console_log!("{}", e);
+                }
+              }
+            }
+          }
+        }
+      }
+    } // else TODO error
+    // let m = Move::Placement { kind: StoneKind::FlatStone, location: Location::from_coords(x, y).unwrap() };
+    // self.game.as_mut().unwrap().make_move(m);
+    self.display.as_mut().unwrap().update(self.game.as_ref().unwrap());
+  }
+
+  fn submit_move(&mut self) {
+    if let Some(m) = self.game.as_ref().unwrap().move_state().clone().to_move() {
+      self.send_message(&ClientMessage::Move(m)); // TODO copied from send_move, consolidate
+    }
+    // check if partial move is a completed move
+    // convert move state into full move
+    // send move to server
+    // TODO if move gets rejected from server we need to revert what we did
   }
 
   fn submit_action(&self, msg: &str) {
@@ -167,11 +238,11 @@ impl Client {
         }
       }
     } else {
-      self.submit_move(msg);
+      self.send_move(msg);
     }
   }
 
-  fn submit_move(&self, msg: &str) { // TODO maybe signal to the display whether the move was okay or not through a return value?
+  fn send_move(&self, msg: &str) { // TODO maybe signal to the display whether the move was okay or not through a return value?
     let move_parse_res = msg.parse();
     if let Ok(m) = move_parse_res {
       self.send_message(&ClientMessage::Move(m));
@@ -213,12 +284,6 @@ fn control_message(c: Option<Color>) -> String {
   format!("You control: {}", color_str)
 }
 
-fn on_click(x: usize, y: usize, client_ref: Rc<RefCell<Client>>) {
-  console_log!("Click on ({}, {})", x, y);
-
-  client_ref.borrow_mut().on_click(x, y);
-}
-
 fn clear_children(el: &Element) -> Result<(), wasm_bindgen::JsValue> {
   while let Some(child) = el.last_child() {
     el.remove_child(&child).map(|_| ())?;
@@ -237,7 +302,7 @@ impl Display {
 
     // safety: mutably borrows its internal value
     // also immutably borrows the passed-in Rc<RefCell<Game>>
-  fn update_display(&mut self, game: &Game) -> Result<(), JsValue> {
+  fn update(&mut self, game: &Game) -> Result<(), JsValue> {
     let board_size = game.board().size().get();
 
     let window = web_sys::window().expect("Couldn't get window");
@@ -268,8 +333,8 @@ impl Display {
           // Profile if this creates substantial memory churn, and if so change it to cache them and only re-create
           // if the board size changes. (Having a specific phase for that would allow us to get rid of various repeated work anyway)
         let client_ref = self.client_ref.clone();
-        let callback = Closure::wrap(Box::new(move || {
-          on_click(col, (board_size - 1) - row, client_ref.clone()); // I don't quite understand why this clone() is necessary, but without it the closure is treated as FnOnce (you get better errors when this isn't in a loop)
+        let callback = Closure::wrap(Box::new(move || { // TODO prevent default on e: MouseEvent (from web-sys)
+          client_ref.borrow_mut().on_click(Location::from_coords(col, (board_size - 1) - row).unwrap());
         }) as Box<dyn Fn()>);
 
         space.set_onclick(Some(callback.as_ref().unchecked_ref())); // as_ref().unchecked_ref() converts gets &Function from Closure
@@ -300,48 +365,66 @@ impl Display {
     let stones = document.get_element_by_id("stones").expect("Couldn't get stones div");
     clear_children(&stones)?;
 
+    let stone_draw_z = |idx, kind| -> usize {
+      if kind == StoneKind::FlatStone {
+        idx
+      } else {
+        // standing and cap stones should be centered on the stone below them, 
+        // so draw them at z-1 so they get the same vertical offset as the stone below them
+        idx.saturating_sub(1) // don't go below 0
+      }
+    };
+
+    let make_stack_elements = |stack: &StoneStack, x, y, base_z| -> Result<(), JsValue> {
+      for (idx, stone) in stack.iter().enumerate() {
+        let color_class = match stone.color {
+          Color::White => "light",
+          Color::Black => "dark"
+        };
+
+        let kind_class = match stone.kind {
+          StoneKind::FlatStone => None,
+          StoneKind::StandingStone => Some("standing"),
+          StoneKind::Capstone => Some("cap")
+        };
+
+        let z = base_z + stone_draw_z(idx, stone.kind);
+
+        let wrapper: HtmlElement = document.create_element("div")?.dyn_into()?;
+        wrapper.class_list().add_1("stone-wrapper")?;
+
+        let transform_x = x * 100;
+        let transform_y = (y as isize) * -100 + (z as isize) * -7;
+        wrapper.style().set_property("transform", &format!("translate({}%, {}%)", transform_x, transform_y))?;
+
+        let stone_el = document.create_element("div")?;
+        stone_el.class_list().add_2("stone", color_class)?;
+
+        if let Some(kind_class) = kind_class {
+          stone_el.class_list().add_1(kind_class)?;
+        }
+
+        wrapper.append_child(&stone_el)?;
+        stones.append_child(&wrapper)?;
+      }
+
+      Ok(())
+    };
+
     for x in 0..board_size {
       for y in 0..board_size {
         let stack = game.board().get(x, y);
 
-        for (idx, stone) in stack.iter().enumerate() {
-          let color_class = match stone.color {
-            Color::White => "light",
-            Color::Black => "dark"
-          };
-
-          let kind_class = match stone.kind {
-            StoneKind::FlatStone => None,
-            StoneKind::StandingStone => Some("standing"),
-            StoneKind::Capstone => Some("cap")
-          };
-
-          let z = if stone.kind == StoneKind::FlatStone {
-            idx
-          } else {
-            // standing and cap stones should be centered on the stone below them, 
-            // so draw them at z-1 so they get the same vertical offset as the stone below them
-            idx.saturating_sub(1) // don't go below 0
-          };
-
-          let wrapper: HtmlElement = document.create_element("div")?.dyn_into()?;
-          wrapper.class_list().add_1("stone-wrapper")?;
-
-          let transform_x = x * 100;
-          let transform_y = (y as isize) * -100 + (z as isize) * -7;
-          wrapper.style().set_property("transform", &format!("translate({}%, {}%)", transform_x, transform_y))?;
-
-          let stone_el = document.create_element("div")?;
-          stone_el.class_list().add_2("stone", color_class)?;
-
-          if let Some(kind_class) = kind_class {
-            stone_el.class_list().add_1(kind_class)?;
-          }
-
-          wrapper.append_child(&stone_el)?;
-          stones.append_child(&wrapper)?;
-        }
+        make_stack_elements(stack, x, y, 0)?;
       }
+    }
+
+    if let MoveState::Movement { cur_loc, carry, .. } = game.move_state() {
+      let existing_stack = &game.board()[*cur_loc];
+      let stack_top_z = existing_stack.top_stone().map_or(0, |stone| stone_draw_z(existing_stack.count() - 1, stone.kind));
+      let base_z = stack_top_z + 2;
+      make_stack_elements(carry, cur_loc.x(), cur_loc.y(), base_z)?;
+
     }
 
     let get_status_text = || -> Result<String, std::fmt::Error> {

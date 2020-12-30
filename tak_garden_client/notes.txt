@@ -19,6 +19,9 @@ x Make board + ranks/files a grid layout, instead of nested bi-directional flex
   ptn.ninja does a side-stack for other than the top x stones, where x is the carry limit 
   Try vertically centering a stack to its space maybe?
 
+. Make css classes descriptive instead of element-specific
+  E.g. status-display and input-row are both a flex display row. They should be both declared the same as such
+
 . Expand setup notes
 . Fix WasmPackPlugin folder creation not creating a sub-folder along a path
   at WasmPackPlugin._makeEmpty (/home/tilman/tak.garden/tak-garden-client/node_modules/@wasm-tool/wasm-pack-plugin/plugin.js:98:10)

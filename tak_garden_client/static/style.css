@@ -185,6 +185,13 @@ a:visited {
   padding-bottom: 1em;
 }
 
+.input-row {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  padding-bottom: 1em;
+}
+
 /* === Size-specific rules === */
 
 /* Both the board and the stone wrappers need to know the board size, so it's marked on their common ancestor,

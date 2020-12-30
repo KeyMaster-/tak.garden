@@ -1,4 +1,5 @@
 const input = document.getElementById('input');
+const submit_button = document.getElementById('submit-move');
 const output = document.getElementById('output');
 const board_wrapper = document.getElementById('board-wrapper');
 const board = document.getElementById('board');
@@ -30,6 +31,10 @@ class Display {
         input.value = '';
       }
     });
+
+    submit_button.onclick = event => {
+      this.client.submit_move();
+    };
 
     this.board_size = null;
     window.addEventListener("resize", (e) => {
