@@ -40,7 +40,9 @@ a:visited {
     /* This is not quite correct. Ideally we'd limit our height such that the aspect-ratio calculated width does not
     exceed the viewport width. However doing it this way seems to limit the width to slightly narrower than the window width
     which works fine for now */
-  max-height: 100vw; 
+  max-height: 100vw;
+
+  user-select: none;
 }
 
 .ranks {
