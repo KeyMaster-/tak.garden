@@ -79,7 +79,7 @@ impl ClientInterface {
     self.0.borrow_mut().submit_move();
   }
 
-    // TODO this should just go to the view directly
+    // TODO JS should just be able to call on the view directly
   pub fn adjust_board_width(&self) {
     self.0.borrow().adjust_board_width()
   }
@@ -88,6 +88,7 @@ impl ClientInterface {
 struct Client {
   connection: Connection,
   game: Option<Game>,
+  controlled_color: Option<Color>,
   display: Option<Display>, // Is only None before Client is fully initialised. TODO replace with LateInit from once_cell (given in docs)
 }
 
@@ -101,6 +102,7 @@ impl Client {
     Self {
       connection,
       game: None,
+      controlled_color: None,
       display: None
     }
   }
@@ -119,6 +121,8 @@ impl Client {
     let mut process_message = |msg| -> Result<(), JsValue> {
       match msg {
         ServerMessage::Control(color_opt) => {
+          self.controlled_color = color_opt;
+
           let window = web_sys::window().expect("Couldn't get window");
           let document = window.document().expect("Couldn't get document");
           let player_status: HtmlElement = document.get_element_by_id("player_status").expect("Couldn't find 'player_status' element").dyn_into()?;
@@ -151,7 +155,7 @@ impl Client {
   }
 
   fn on_click(&mut self, click_loc: Location) {
-    let handle_click = |game: &mut Game| -> Result<(), ActionInvalidReason> {
+    fn handle_click(game: &mut Game, click_loc: Location) -> Result<(), ActionInvalidReason> {
       use ActionInvalidReason::*;
       use MovementInvalidReason::*;
 
@@ -211,8 +215,11 @@ impl Client {
     };
 
     if let Some(game) = &mut self.game {
-      if let Err(e) = handle_click(game) {
-        console_log!("Client::on_click attempted an invalid action: {}", e);
+      if let Some(controlled_color) = self.controlled_color {
+        if game.active_color() == controlled_color {
+          handle_click(game, click_loc)
+            .unwrap_or_else(|e| console_log!("Client::on_click attempted an invalid action: {}", e));
+        }
       }
     } else {
       console_log!("Client::on_click called with no game present!");
@@ -225,9 +232,6 @@ impl Client {
     if let Some(m) = self.game.as_ref().unwrap().move_state().clone().to_move() {
       self.send_message(&ClientMessage::Move(m)); // TODO copied from send_move, consolidate
     }
-    // check if partial move is a completed move
-    // convert move state into full move
-    // send move to server
     // TODO if move gets rejected from server we need to revert what we did
   }
 
@@ -242,9 +246,6 @@ impl Client {
             self.send_message(&ClientMessage::ResetGame(board_size));
           } else {
             // TODO tell display that the size was invalid
-            // send_text(&tx_2, &format!("msg: Game size {} is not a valid game size.", size));
-
-            // send_game_msg(&tx_2, &ServerMessage::ActionInvalid(format!("Game size {} is not a valid game size.", size)));
           }
         }
       }
@@ -378,7 +379,10 @@ impl Display {
         }
       };
 
-      let make_stack_elements = |stack: &StoneStack, x, y, base_z| -> Result<(), JsValue> {
+        // base_draw_z is at what height we start drawing the stack
+        // z_offset is by what we offset the draw z of each stone relative to where it would be drawn
+        // this is relevant to capstone / standing stone offsetting - the z_offset applies _after_ the (potentially saturated) -1 subtraction in stone_draw_z
+      let make_stack_elements = |stack: &StoneStack, x, y, base_draw_z, z_offset| -> Result<(), JsValue> {
         for (idx, stone) in stack.iter().enumerate() {
           let color_class = match stone.color {
             Color::White => "light",
@@ -391,7 +395,7 @@ impl Display {
             StoneKind::Capstone => Some("cap")
           };
 
-          let z = stone_draw_z(base_z + idx, stone.kind);
+          let z = stone_draw_z(base_draw_z + idx, stone.kind) + z_offset;
 
           let wrapper: HtmlElement = document.create_element("div")?.dyn_into()?;
           wrapper.class_list().add_1("stone-wrapper")?;
@@ -417,19 +421,14 @@ impl Display {
       for x in 0..board_size {
         for y in 0..board_size {
           let stack = game.board().get(x, y);
-          make_stack_elements(stack, x, y, 0)?;
+          make_stack_elements(stack, x, y, 0, 0)?;
         }
       }
 
       if let MoveState::Movement { cur_loc, carry, .. } = game.move_state() {
         let existing_stack = &game.board()[*cur_loc];
-        let base_z = 
-          if let Some(stone) = existing_stack.top_stone() {
-            stone_draw_z(existing_stack.count() - 1, stone.kind) + 2 // +2 to leave 1 stone's worth of space between what's there and what's held
-          } else {
-            1 // There's no stone below us, so just hover 1 space above the board
-          };
-        make_stack_elements(carry, cur_loc.x(), cur_loc.y(), base_z)?;
+        let base_draw_z = existing_stack.count() + 1; // We should never be hovering an existing stack with a capstone / standing stone on top, so we can ignore the -1 correction here.
+        make_stack_elements(carry, cur_loc.x(), cur_loc.y(), base_draw_z, 1)?;
       }
 
       let get_status_text = || -> Result<String, std::fmt::Error> {
