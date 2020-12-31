@@ -4,7 +4,13 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{Element, HtmlElement};
 use tak_garden_common::{ServerMessage, ClientMessage};
-use rustak::{Game, BoardSize, Location, Color, StoneKind, StoneStack, GameState, MoveState, MoveAction, WinKind, file_idx_to_char};
+use rustak::{
+  Game, GameState, MoveState, MoveAction, WinKind,
+  BoardSize, Location, Color, 
+  StoneKind, StoneStack,
+  ActionInvalidReason, MovementInvalidReason,
+  file_idx_to_char,
+};
 use std::fmt::Write;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -148,7 +154,10 @@ impl Client {
   }
 
   fn on_click(&mut self, click_loc: Location) {
-    if let Some(game) = &mut self.game {
+    let handle_click = |game: &mut Game| -> Result<(), ActionInvalidReason> {
+      use ActionInvalidReason::*;
+      use MovementInvalidReason::*;
+
       let board = game.board();
 
       // TODO check that it's your turn
@@ -156,15 +165,13 @@ impl Client {
         MoveState::Start => {
           let target_stack = &board[click_loc];
           if target_stack.count() == 0 {
-            // TODO check if stone type is available to place
+            // TODO pick capstone if no flat stones left. Needs knowledge of what color we're playing
             let action = MoveAction::Place { loc: click_loc, kind: StoneKind::FlatStone };
-            game.do_action(action); // TODO error handling
+            game.do_action(action)?; // TODO error handling
           } else {
-            // TODO check that we control the stack
-            // (Could also be done by ignoring the error from do_action if it's "stack not controlled". Consider it)
             let pickup_count = std::cmp::min(target_stack.count(), board.size().get());
             let action = MoveAction::Pickup { loc: click_loc, count: pickup_count };
-            game.do_action(action);
+            game.do_action(action).or_else(|e| if let MovementInvalid(StartNotControlled) = e { Ok(()) } else { Err(e) })?;
           }
         },
         MoveState::Placed { loc, kind } => {
@@ -178,12 +185,10 @@ impl Client {
             // undo placement
           }
         },
-        MoveState::Movement { start, cur_loc, carry, dir, drops } => {
+        MoveState::Movement { cur_loc, dir, .. } => {
           if click_loc == *cur_loc {
-            if carry.count() >= 1 {
-              let action = MoveAction::Drop { count: 1 };
-              game.do_action(action);
-            }
+            let action = MoveAction::Drop { count: 1 };
+            game.do_action(action).or_else(|e| if let DropTooLarge = e { Ok(()) } else { Err(e) })?;
           } else {
             let valid_locs = if let Some(dir) = dir {
               cur_loc.move_along(*dir, board.size()).iter().map(|&loc| (loc, *dir)).collect()
@@ -191,22 +196,32 @@ impl Client {
               cur_loc.neighbours_with_direction(board.size())
             };
 
-            if let Some((_, dir)) = valid_locs.iter().find(|(loc, dir)| *loc == click_loc) {
-              // TODO check if drop is valid? or use error reporting since it already does that logic for us
-              if carry.count() >= 1 {
-                let action = MoveAction::MoveAndDropOne { dir: *dir };
-                let res = game.do_action(action); // TODO error handling.
-                if let Err(e) = res {
-                  console_log!("{}", e);
+            if let Some((_, dir)) = valid_locs.iter().find(|(loc, _)| *loc == click_loc) {
+              let action = MoveAction::MoveAndDropOne { dir: *dir };
+              game.do_action(action).or_else(|e| {
+                match e {
+                  DropTooLarge => Ok(()),
+                  MovementInvalid(DropNotAllowed) => Ok(()),
+                  _ => Err(e)
                 }
-              }
+              })?;
             }
           }
         }
       }
-    } // else TODO error
+
+      Ok(())
+    };
+    if let Some(game) = &mut self.game {
+      if let Err(e) = handle_click(game) {
+        console_log!("Client::on_click attempted an invalid action: {}", e);
+      }
+    } else {
+      console_log!("Client::on_click called with no game present!");
+    }
     // let m = Move::Placement { kind: StoneKind::FlatStone, location: Location::from_coords(x, y).unwrap() };
     // self.game.as_mut().unwrap().make_move(m);
+
     self.display.as_mut().unwrap().update(self.game.as_ref().unwrap());
   }
 
@@ -300,8 +315,7 @@ impl Display {
     }
   }
 
-    // safety: mutably borrows its internal value
-    // also immutably borrows the passed-in Rc<RefCell<Game>>
+    // TODO will callers conceivably react to an error from this? Consider logging it and ignoring errors otherwise
   fn update(&mut self, game: &Game) -> Result<(), JsValue> {
     let board_size = game.board().size().get();
 
