@@ -80,7 +80,7 @@ impl ClientInterface {
   }
 
     // TODO this should just go to the view directly
-  pub fn adjust_board_width(&self) -> Result<(), JsValue> {
+  pub fn adjust_board_width(&self) {
     self.0.borrow().adjust_board_width()
   }
 }
@@ -126,7 +126,7 @@ impl Client {
 
           // TODO consolidate callsites for this logic.
           // This is here because we might not have had text in the output before, in which case this changes the available height for the board
-          self.adjust_board_width()?;
+          self.adjust_board_width();
         },
         ServerMessage::ActionInvalid(reason) => {
           let window = web_sys::window().expect("Couldn't get window");
@@ -135,7 +135,7 @@ impl Client {
           output.set_inner_text(&reason);
 
           // TODO consolidate callsites for this logic. See above.
-          self.adjust_board_width()?;
+          self.adjust_board_width();
         },
         ServerMessage::GameState(game) => {
           self.game = Some(game);
@@ -253,19 +253,13 @@ impl Client {
     }
   }
 
-  fn send_move(&self, msg: &str) { // TODO maybe signal to the display whether the move was okay or not through a return value?
+  fn send_move(&self, msg: &str) {
     let move_parse_res = msg.parse();
     if let Ok(m) = move_parse_res {
       self.send_message(&ClientMessage::Move(m));
     } else {
       //TODO tell display that the submitted move is wrong
     }
-
-    // parse into move struct
-    // send error back to display if appropriate
-    // else serialise, pass binary message to connection struct
-      // need connection class, contains ws connection, created in index.js,
-      // handles forwarding to client and receiving from client
   }
 
   fn send_message(&self, msg: &ClientMessage) {
@@ -278,11 +272,9 @@ impl Client {
     self.connection.send_message(&msg_binary_res.unwrap());
   }
 
-  fn adjust_board_width(&self)->Result<(), JsValue> {
+  fn adjust_board_width(&self) {
     if let Some(game) = self.game.as_ref() {
       Display::adjust_board_width(game.board().size())
-    } else {
-      Ok(())
     }
   }
 }
@@ -479,31 +471,34 @@ impl Display {
       let stone_counter_dark_cap: HtmlElement = stone_counter_dark_cap.dyn_into()?;
       stone_counter_dark_cap.set_inner_text(&(game.held_stones().get(Color::Black).capstone().to_string()));
 
-      Display::adjust_board_width(game.board().size())?;
+      Display::adjust_board_width(game.board().size());
 
       Ok(())
     })()
       .unwrap_or_else(|e| console_log!("Display::update error: {:?}", e));
   }
 
-  fn adjust_board_width(board_size: BoardSize) -> Result<(), JsValue> {
-    let board_size = board_size.get() as i32;
+  fn adjust_board_width(board_size: BoardSize) {
+    (|| -> Result<(), JsValue> {
+      let board_size = board_size.get() as i32;
 
-    let window = web_sys::window().expect("Couldn't get window");
-    let document = window.document().expect("Couldn't get document");
+      let window = web_sys::window().expect("Couldn't get window");
+      let document = window.document().expect("Couldn't get document");
 
-    let files = document.get_element_by_id("files").expect("Couldn't get files div");
-    let ranks = document.get_element_by_id("ranks").expect("Couldn't get ranks div");
-    let board_wrapper = document.get_element_by_id("board-wrapper").expect("Couldn't get board-wrapper div");
-    let board_wrapper: HtmlElement = board_wrapper.dyn_into()?;
+      let files = document.get_element_by_id("files").expect("Couldn't get files div");
+      let ranks = document.get_element_by_id("ranks").expect("Couldn't get ranks div");
+      let board_wrapper = document.get_element_by_id("board-wrapper").expect("Couldn't get board-wrapper div");
+      let board_wrapper: HtmlElement = board_wrapper.dyn_into()?;
 
-    let files_height = files.children().item(0).unwrap().client_height();
-    let ranks_width = ranks.client_width();
-    let square_size = (board_wrapper.offset_height() - files_height) / (board_size + 1);
-    let target_width = square_size * board_size + ranks_width;
+      let files_height = files.children().item(0).unwrap().client_height();
+      let ranks_width = ranks.client_width();
+      let square_size = (board_wrapper.offset_height() - files_height) / (board_size + 1);
+      let target_width = square_size * board_size + ranks_width;
 
-    board_wrapper.style().set_property("width", &(target_width.to_string()))?;
+      board_wrapper.style().set_property("width", &(target_width.to_string()))?;
 
-    Ok(())
+      Ok(())
+    })()
+      .unwrap_or_else(|e| console_log!("Display::adjust_board_width error: {:?}", e));
   }
 }
