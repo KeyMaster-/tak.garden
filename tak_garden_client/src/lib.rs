@@ -8,7 +8,7 @@ use rustak::{
   Game, GameState, MoveState, MoveAction, WinKind,
   BoardSize, Location, Color, 
   StoneKind, StoneStack,
-  ActionInvalidReason, MovementInvalidReason,
+  ActionInvalidReason, PlacementInvalidReason, MovementInvalidReason,
   file_idx_to_char,
 };
 use std::fmt::Write;
@@ -157,18 +157,31 @@ impl Client {
   fn on_click(&mut self, click_loc: Location) {
     fn handle_click(game: &mut Game, click_loc: Location) -> Result<(), ActionInvalidReason> {
       use ActionInvalidReason::*;
+      use PlacementInvalidReason::*;
       use MovementInvalidReason::*;
 
       let board = game.board();
 
       // TODO check that it's your turn
-      match game.move_state() {
+      match game.move_state().clone() {
         MoveState::Start => {
           let target_stack = &board[click_loc];
           if target_stack.count() == 0 {
-            // TODO pick capstone if no flat stones left. Needs knowledge of what color we're playing
+
             let action = MoveAction::Place { loc: click_loc, kind: StoneKind::FlatStone };
-            game.do_action(action)?; // TODO error handling
+            let try_capstone = match game.do_action(action) {
+              Ok(_) => Ok(false),
+              Err(e) => if let PlacementInvalid(NoStoneAvailable) = e {
+                Ok(true)
+              } else {
+                Err(e)
+              }
+            }?;
+
+            if try_capstone {
+              let action = MoveAction::Place { loc: click_loc, kind: StoneKind::Capstone };
+              game.do_action(action)?;
+            }
           } else {
             let pickup_count = std::cmp::min(target_stack.count(), board.size().get());
             let action = MoveAction::Pickup { loc: click_loc, count: pickup_count };
@@ -176,23 +189,60 @@ impl Client {
           }
         },
         MoveState::Placed { loc, kind } => {
-          if click_loc == *loc {
-            // get placed stone type
-            // undo placement
-            // cycle stone type (flat -> standing -> cap -> flat)
-            // check if new stone type is available
-            // re-do placement with cycled stone type if so
+          if click_loc == loc {
+            game.undo();
+
+            let mut new_kind = kind;
+            loop {
+              new_kind = match new_kind {
+                StoneKind::FlatStone => StoneKind::StandingStone,
+                StoneKind::StandingStone => StoneKind::Capstone,
+                StoneKind::Capstone => StoneKind::FlatStone
+              };
+
+              let action = MoveAction::Place { loc, kind: new_kind };
+              let success = match game.do_action(action) {
+                Ok(_) => Ok(true),
+                Err(e) => {
+                  if let PlacementInvalid(ref placement_reason) = e {
+                    match placement_reason {
+                      NoStoneAvailable => Ok(false),
+                      StoneKindNotValid => Ok(false),
+                      _ => Err(e)
+                    }
+                  } else {
+                    Err(e)
+                  }
+                }
+              }?;
+
+              if success {
+                break;
+              }
+            }
           } else {
-            // undo placement
+            game.undo();
           }
         },
         MoveState::Movement { cur_loc, dir, .. } => {
-          if click_loc == *cur_loc {
+          if click_loc == cur_loc {
             let action = MoveAction::Drop { count: 1 };
-            game.do_action(action).or_else(|e| if let DropTooLarge = e { Ok(()) } else { Err(e) })?;
+            game.do_action(action)?;
+
+            if let MoveState::Movement { carry, drops, .. } = game.move_state().clone() {
+              // If we've dropped all the stones we picked up without moving, undo the whole action
+              if carry.count() == 0 && drops.len() == 0 {
+                loop {
+                  game.undo();
+                  if let MoveState::Start = game.move_state() {
+                    break;
+                  }
+                }
+              }
+            }
           } else {
             let valid_locs = if let Some(dir) = dir {
-              cur_loc.move_along(*dir, board.size()).iter().map(|&loc| (loc, *dir)).collect()
+              cur_loc.move_along(dir, board.size()).iter().map(|&loc| (loc, dir)).collect()
             } else {
               cur_loc.neighbours_with_direction(board.size())
             };
