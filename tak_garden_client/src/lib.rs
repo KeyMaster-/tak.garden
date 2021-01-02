@@ -224,38 +224,93 @@ impl Client {
             game.undo();
           }
         },
-        MoveState::Movement { cur_loc, dir, .. } => {
-          if click_loc == cur_loc {
-            let action = MoveAction::Drop { count: 1 };
-            game.do_action(action)?;
+        MoveState::Movement { start, cur_loc, dir, .. } => {
+          // Set up a mapping of space -> resulting action on the game
+          let mut space_actions: Vec<(Location, Box<dyn FnOnce(&mut Game)->Result<(), ActionInvalidReason>>)> = vec![];
 
-            if let MoveState::Movement { carry, drops, .. } = game.move_state().clone() {
-              // If we've dropped all the stones we picked up without moving, undo the whole action
-              if carry.count() == 0 && drops.len() == 0 {
-                loop {
-                  game.undo();
-                  if let MoveState::Start = game.move_state() {
-                    break;
+          space_actions.push(
+            (cur_loc, Box::new(
+              |game| -> _ {
+                let action = MoveAction::Drop { count: 1 };
+                game.do_action(action)?;
+
+                if let MoveState::Movement { carry, drops, .. } = game.move_state().clone() {
+                  // If we've dropped all the stones we picked up without moving, undo the whole action
+                  // TODO give the game a "undo to last start" method
+                  if carry.count() == 0 && drops.len() == 0 {
+                    loop {
+                      game.undo();
+                      if let MoveState::Start = game.move_state() {
+                        break;
+                      }
+                    }
                   }
                 }
-              }
+
+                Ok(())
+              })
+            ),
+          );
+
+          if let Some(dir) = dir {
+            let opposite = dir.opposite();
+
+            let mut loc = cur_loc;
+            let mut prev_locs = vec![];
+              // Get all locations between cur_loc and start, excluding cur_loc, including start
+            while loc != start {
+              loc = loc.move_along(opposite, game.board().size()).unwrap(); // TODO error handling for the unwrap
+              prev_locs.push(loc);
             }
-          } else {
-            let valid_locs = if let Some(dir) = dir {
+
+            space_actions.extend(prev_locs.into_iter().map(|target_loc| {
+              (target_loc, Box::new(
+                move |game: &mut Game| -> _ {
+                  loop {
+                    game.undo();
+                    if let MoveState::Movement { cur_loc, .. } = game.move_state() {
+                      if *cur_loc == target_loc {
+                        break;
+                      }
+                    }
+                  }
+                  Ok(())
+                }) as Box<_>
+              )
+            }))
+          }
+
+          let move_drop_locs = 
+            if let Some(dir) = dir {
               cur_loc.move_along(dir, board.size()).iter().map(|&loc| (loc, dir)).collect()
             } else {
               cur_loc.neighbours_with_direction(board.size())
             };
 
-            if let Some((_, dir)) = valid_locs.iter().find(|(loc, _)| *loc == click_loc) {
-              let action = MoveAction::MoveAndDropOne { dir: *dir };
-              game.do_action(action).or_else(|e| {
-                match e {
-                  DropTooLarge => Ok(()),
-                  MovementInvalid(DropNotAllowed) => Ok(()),
-                  _ => Err(e)
-                }
-              })?;
+          space_actions.extend(move_drop_locs.into_iter().map(|(loc, dir)| {
+            (loc, Box::new(
+              move |game: &mut Game| -> _ {
+                let action = MoveAction::MoveAndDropOne { dir: dir };
+                game.do_action(action).or_else(|e| {
+                  match e {
+                    DropTooLarge => Ok(()),
+                    MovementInvalid(DropNotAllowed) => Ok(()),
+                    _ => Err(e)
+                  }
+                })
+              }) as Box<_>
+            )
+          }));
+
+          if let Some((_, action)) = space_actions.into_iter().find(|(loc, _)| *loc == click_loc) {
+            action(game)?;
+          } else {
+            // TODO give the game a "undo to last start" method
+            loop {
+              game.undo();
+              if let MoveState::Start = game.move_state() {
+                break;
+              }
             }
           }
         }
