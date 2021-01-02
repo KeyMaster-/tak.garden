@@ -206,6 +206,9 @@ For hosting the actual server and make it accessible over the internet.
   Done!
 
 Useful commands:
+  `sudo service tak.garden restart`
+    Restart the server after a rebuild.
+
   `sudo journalctl -u tak.garden`
     Shows logs of the server's stdout and stderr.
   

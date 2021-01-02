@@ -10,5 +10,6 @@ pub enum ServerMessage {
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ClientMessage {
   Move(Move),
-  ResetGame(BoardSize)
+  ResetGame(BoardSize),
+  UndoMove
 }

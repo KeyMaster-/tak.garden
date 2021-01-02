@@ -9,7 +9,7 @@ use futures::{FutureExt, StreamExt};
 use warp::ws::{WebSocket, Message};
 use warp::Filter;
 
-use rustak::{Game, BoardSize, Color, Move};
+use rustak::{Game, BoardSize, Color, Move, MoveState};
 use tak_garden_common::{ServerMessage, ClientMessage};
 
 const NO_CONNECTION_ID: usize = 0;
@@ -116,6 +116,22 @@ async fn on_connected(ws: WebSocket, game: GameState, connections: Connections, 
       ClientMessage::Move(m) => on_move(my_id, m, &game, &connections, &tx_2, &controller_ids).await,
       ClientMessage::ResetGame(size) => {
         *game.write().await = Game::new(size);
+        broadcast_game_state(&game, &connections).await;
+      },
+      ClientMessage::UndoMove => {
+        println!("Undoing last move");
+        {
+          let mut game = game.write().await;
+
+            // TODO give game an "undo last full move" method
+            // that method will have to also handle potentially being in a partial move, which this doesn't
+          loop {
+            game.undo();
+            if let MoveState::Start = game.move_state() {
+              break;
+            }
+          }
+        }
         broadcast_game_state(&game, &connections).await;
       }
     }

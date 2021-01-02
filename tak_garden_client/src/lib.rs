@@ -353,6 +353,8 @@ impl Client {
             // TODO tell display that the size was invalid
           }
         }
+      } else if ctrl_text == "undo" {
+        self.send_message(&ClientMessage::UndoMove);
       }
     } else {
       self.send_move(msg);
