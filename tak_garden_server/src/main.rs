@@ -98,7 +98,6 @@ async fn on_connected(ws: WebSocket, game: GameState, connections: Connections, 
         break;
       }
     };
-    println!("Got msg: {:?}", msg);
 
     if !msg.is_binary() {
       println!("Got message {:?}, but it's not binary. Ignoring.", msg);
@@ -145,6 +144,7 @@ async fn on_move(conn_id: usize, m: Move, game: &GameState, connections: &Connec
     };
 
     if is_color_controller {
+      println!("Move: {}, {}", active_color, m);
       Some(game.make_move(m))
     } else {
       None
@@ -182,7 +182,6 @@ fn send_msg(tx: &ConnectionSender, msg: &ServerMessage) {
     return;
   }
   let msg_binary = msg_binary_res.unwrap();
-  println!("[game mgs send] {:?}, {:?}", msg, msg_binary);
   if let Err(_disconnected) = tx.send(Ok(Message::binary(msg_binary))) {
     // Handled in on_disconnected
   };

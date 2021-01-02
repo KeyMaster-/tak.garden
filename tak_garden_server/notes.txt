@@ -66,6 +66,11 @@ For local development testing. Roughly mirrors the eventual deployed setup.
 
   Later stop the server with `sudo nginx -s stop`.
 
+2. Compile and run the server
+  `cargo run -p tak_garden_server`
+    Run from the tak_garden_server directory.
+    The location this is executed from matters because the files to be served
+    have to be at the correct location relative to the process' working directory.
 
 # Public server setup
 For hosting the actual server and make it accessible over the internet.
@@ -200,6 +205,7 @@ For hosting the actual server and make it accessible over the internet.
 
   Done!
 
-
-
+Useful commands:
+  `sudo journalctl -u tak.garden`
+    Shows logs of the server's stdout and stderr.
   
