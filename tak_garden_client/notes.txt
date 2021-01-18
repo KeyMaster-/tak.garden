@@ -1,131 +1,49 @@
 # Todo
-x Make display a proper class
-x Make board + ranks/files a grid layout, instead of nested bi-directional flex
-. Cache container divs in rust side
-. Implement click moves
-  x Get click events on spaces
-  x Get space coord in click callback
-  x Forward events to rust
-  . Generate valid click spaces for given move state, without undo
-  . Convert click events to move actions and apply
-    Do the above two with a state machine. Input is always click(loc), result is state changes roughly matching move states
-  . Display of partial move states
-    Mainly floating carry stack
-  . Finalise move
-    For now with its own special button
-
-
-. Handle stack heights that would overflow to the space above
+## Features
+. Area control display
+. Handle visualisation of high stacks (when the stack overlaps the space above)
   ptn.ninja does a side-stack for other than the top x stones, where x is the carry limit 
   Try vertically centering a stack to its space maybe?
+. Game history
+. Game history rewind
+. Swap colour while only person in game
+. Highlight clickable spaces
+. Controlled spaces connectivity
+. Visual overhaul 
+  . Better contrast between stacked pieces of the same colour
+  . Lay out piece counters near each other for better comparison
+. Switch layout to be horizontal or vertical-focused based on screen width
+  E.g. put counters, control display etc to the left/right of the board if the screen is wider than high,
+  put them above/below if the inverse is true.
 
+## Cleanup
+. Cache container divs in rust side
 . Make css classes descriptive instead of element-specific
   E.g. status-display and input-row are both a flex display row. They should be both declared the same as such
-
-. Expand setup notes
 . Fix WasmPackPlugin folder creation not creating a sub-folder along a path
   at WasmPackPlugin._makeEmpty (/home/tilman/tak.garden/tak-garden-client/node_modules/@wasm-tool/wasm-pack-plugin/plugin.js:98:10)
   at WasmPackPlugin.apply (/home/tilman/tak.garden/tak-garden-client/node_modules/@wasm-tool/wasm-pack-plugin/plugin.js:52:10)
+
+## Admin
+. Expand setup notes
+
+x Make display a proper class
+x Make board + ranks/files a grid layout, instead of nested bi-directional flex
+
+x Implement click moves
+  x Get click events on spaces
+  x Get space coord in click callback
+  x Forward events to rust
+  x Generate valid click spaces for given move state, without undo
+  x Convert click events to move actions and apply
+    Do the above two with a state machine. Input is always click(loc), result is state changes roughly matching move states
+  x Display of partial move states
+    Mainly floating carry stack
+  x Finalise move
+    For now with its own special button
 
 # Setup notes
 Install wasm-pack
 Install npm
 npm install
 
-# Partial move implementation thoughts
-
-Input -> partial move pseudocode:
-  If game is finished, ignore inputs
-  If not active player, ignore inputs
-  Start in Move Start state, storing the pre-move game state
-
-## Move Start state
-On Enter:
-  Reset game to pre-move game state
-
-If click on empty space
-  Go to Placement state. Pass in clicked space
-
-If click on opponent-controlled space, ignore
-
-If click on player-controlled space
-  Go to Movement Start state. Pass in clicked space
-
-## Placement state
-On Enter:
-  Store active space
-  If flat stones available, place flat stone at active space
-  Else, place capstone
-  (Can't have no stones at all, because the game will have ended already)
-
-If click on active space
-  Remove & put back placed stone
-  Cycle the stone kind forward: flat -> standing -> cap. Skip cap if no caps available, skip flat/standing if no flats
-  Place stone of new kind.
-
-If click on any other space
-  Go to move start state. 
-    Note: having whole-move undo done on enter of the move start state for now. But maybe each state should do relevant
-    cleanup on exit. That logic may depend on what state they're exiting to though..
-
-## Movement Start state
-On Enter
-  Store active space
-  Pick up top stones at active space, up to carry limit
-  Store picked up stones in "held stack"
-
-If clicked on active space
-  Drop one stone at this space
-  If held stack is now empty, move was aborted, so go to Move Start state
-    Note: this abort doesn't need any cleanup, argument against doing cleanup at Move Start on enter?
-
-  If click on 4-neighbour of active space
-    Try drop one stone at clicked location
-    If not allowed, ignore click
-    If allowed:
-      Set total count of carried stones to count of held stack
-      Set first drop count to 1
-      Set movement direction from difference between active and clicked space
-      If stack is empty, move is complete
-        Go to TODO
-          Note: need a target state that signals the move is done, but still has logic for undo, and the relevant data for that.
-      [Store info necessary for undo? E.g. the drop may perform stomping]
-      Go to Movement Continue state, passing along
-        clicked space as active space
-        held stack
-        total drop count
-        drop sequence (at this point single drop of 1)
-
-
-## Movement Continue state
-On Enter
-  Store active space
-  Store held stack
-  Store total drop count
-  Store drop sequence
-  [Store undo info]
-
-Note: Placement does actual move logic on enter. Movement does it on exit (of movement start / movement continue)
-  Consolidate for consistency?
-
-
-    While in movement start mode
-      If click on the active space
-        Drop one stone at this space.
-        If held stack is empty, move was aborted
-      If click on N/S/E/W space of active space
-        Change active space to clicked space
-        Set movement direction based on prev active -> new active difference
-        Drop stone at new active
-        If held stack is empty, move is complete
-        Else go to movement continue mode
-
-        While in movement continue mode
-          If click on active space
-            Drop one stone at this space
-            If held stone stack is empty, finish move
-          If click on space adjacent to active space in movement direction
-            Change active space to clicked space
-            Drop one stone at new active space
-            If held stack is empty, finish move
-          If click on 

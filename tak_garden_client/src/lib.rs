@@ -538,6 +538,53 @@ impl Display {
         make_stack_elements(carry, cur_loc.x(), cur_loc.y(), base_draw_z, 1)?;
       }
 
+      let (white_control, black_control) = game.board().count_flats_control();
+
+      let control_count_light = document.get_element_by_id("control-count-light").expect("Couldn't get control-count-light div");
+      let control_count_light: HtmlElement = control_count_light.dyn_into()?;
+      // control_count_light.set_inner_text(&format!("{}", white_control));
+      control_count_light.set_inner_text(&format!("+{}", white_control.saturating_sub(black_control)));
+
+      let control_count_dark = document.get_element_by_id("control-count-dark").expect("Couldn't get control-count-dark div");
+      let control_count_dark: HtmlElement = control_count_dark.dyn_into()?;
+      // control_count_dark.set_inner_text(&format!("{}", black_control));
+      control_count_dark.set_inner_text(&format!("+{}", black_control.saturating_sub(white_control)));
+
+      let set_control_bar_length = |bar: &HtmlElement, advantage: u32| -> Result<(), JsValue> {
+        let advantage = advantage as f32;
+          // 2^n progressive
+        // let percent_size = 0.1_f32.max(1.0 - 1.0 / advantage.exp2()) * 100.0;
+          // uniform 1/board_size^2 steps
+        // let percent_size = 10.0 + 90.0 * (advantage / game.board().size().get().pow(2) as f32);
+
+        let percent_size = {
+          let uniform_count = (game.board().size().get().pow(2) / 4) as f32;
+          let section_count = uniform_count + 1.0;
+          let section_size = 1.0 / section_count;
+
+          let uniform_section_size = section_size * (uniform_count - 1.0);
+
+          let scalar = if advantage < uniform_count {
+            section_size * advantage
+          } else {
+            uniform_section_size + (1.0 - 1.0 / ((advantage - uniform_count) + 1.0).exp2()) * (1.0 - uniform_section_size)
+          };
+
+          scalar * 100.0
+        };
+
+        bar.style().set_property("height", &format!("{}%", percent_size))?;
+        Ok(())
+      };
+
+      let control_bar_light = document.get_element_by_id("control-bar-light").expect("Couldn't get control-bar-light div");
+      let control_bar_light: HtmlElement = control_bar_light.dyn_into()?;
+      set_control_bar_length(&control_bar_light, white_control.saturating_sub(black_control))?;
+
+      let control_bar_dark = document.get_element_by_id("control-bar-dark").expect("Couldn't get control-bar-dark div");
+      let control_bar_dark: HtmlElement = control_bar_dark.dyn_into()?;
+      set_control_bar_length(&control_bar_dark, black_control.saturating_sub(white_control))?;
+
       let get_status_text = || -> Result<String, std::fmt::Error> {
         let mut status_text = String::new();
         match game.state() {
@@ -593,14 +640,18 @@ impl Display {
 
       let files = document.get_element_by_id("files").expect("Couldn't get files div");
       let ranks = document.get_element_by_id("ranks").expect("Couldn't get ranks div");
+      let control_display = document.get_element_by_id("control-display").expect("Couldn't get control-display div");
       let board_wrapper = document.get_element_by_id("board-wrapper").expect("Couldn't get board-wrapper div");
       let board_wrapper: HtmlElement = board_wrapper.dyn_into()?;
 
       let files_height = files.children().item(0).unwrap().client_height();
-      let ranks_width = ranks.client_width();
       let square_size = (board_wrapper.offset_height() - files_height) / (board_size + 1);
-      let target_width = square_size * board_size + ranks_width;
 
+      let ranks_width = ranks.client_width();
+      let control_display_width = control_display.client_width();
+      let target_width = square_size * board_size + ranks_width + control_display_width;
+
+      // TODO Do I need too set the width on the board wrapper? Could I not set the width more directly on the "board" element directly?
       board_wrapper.style().set_property("width", &(target_width.to_string()))?;
 
       Ok(())
