@@ -1,4 +1,9 @@
 # TODO
+## Features
+. Multiple sessions
+  Route to sessions via random ID
+
+## Admin
 . Read up on linux user accounts/groups, privileges (per user), permissions (per dir/file)
 . Adjust server setup to run server binary as less-privileged user.
   Do I need to move the server dir to a directory that's outside of /home/tilman, and then
