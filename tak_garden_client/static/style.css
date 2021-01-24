@@ -51,33 +51,29 @@ a:visited {
   height: 100%;
 
   display: flex;
-  align-items: stretch;
   flex-direction: column;
 
   border-left: 2px solid #222;
   border-right: 2px solid #222;
-}
 
-.control-bar-wrapper {
-  flex: auto;
   position: relative;
-
-  background-color: #aaa;
 }
 
 .control-bar {
   width: 100%;
-  position: absolute;
+  /*position: absolute;*/
 }
 
 .control-bar.light {
   background-color: #f9f9f9;
-  bottom: 0;
+  /*top: 0;*/
+  position: relative;
 }
 
 .control-bar.dark {
   background-color: #555;
-  top: 0;
+  /*bottom: 0;*/
+  position: relative;
 }
 
 .control-count {

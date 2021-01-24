@@ -538,52 +538,61 @@ impl Display {
         make_stack_elements(carry, cur_loc.x(), cur_loc.y(), base_draw_z, 1)?;
       }
 
-      let (white_control, black_control) = game.board().count_flats_control();
+      let (mut white_control, mut black_control) = game.board().count_flats_control();
+
+      // TODO clean up all the control modification logic
+        // Adjust the control counts to take the carried stack into account
+        // Adds the control of the carried stack if applicable
+        // Removes the control of the stack being hovered (if it has stones)
+        // With this logic, the count shows what the counts are if the carried stack was placed down at the hovered location
+      if let MoveState::Movement { cur_loc, carry, .. } = game.move_state() {
+        let existing_stack = &game.board()[*cur_loc];
+        if let Some(stone) = carry.top_stone() {
+          if let Some(stone) = existing_stack.top_stone() {
+            if let StoneKind::FlatStone = stone.kind {
+              match stone.color {
+                Color::White => white_control -= 1,
+                Color::Black => black_control -= 1,
+              }
+            }
+          }
+
+          if let StoneKind::FlatStone = stone.kind {
+            match stone.color {
+              Color::White => white_control += 1,
+              Color::Black => black_control += 1,
+            }
+          }
+        }
+      }
 
       let control_count_light = document.get_element_by_id("control-count-light").expect("Couldn't get control-count-light div");
       let control_count_light: HtmlElement = control_count_light.dyn_into()?;
-      // control_count_light.set_inner_text(&format!("{}", white_control));
-      control_count_light.set_inner_text(&format!("+{}", white_control.saturating_sub(black_control)));
+      control_count_light.set_inner_text(&format!("{}", white_control));
 
       let control_count_dark = document.get_element_by_id("control-count-dark").expect("Couldn't get control-count-dark div");
       let control_count_dark: HtmlElement = control_count_dark.dyn_into()?;
-      // control_count_dark.set_inner_text(&format!("{}", black_control));
-      control_count_dark.set_inner_text(&format!("+{}", black_control.saturating_sub(white_control)));
+      control_count_dark.set_inner_text(&format!("{}", black_control));
 
-      let set_control_bar_length = |bar: &HtmlElement, advantage: u32| -> Result<(), JsValue> {
-        let advantage = advantage as f32;
-          // 2^n progressive
-        // let percent_size = 0.1_f32.max(1.0 - 1.0 / advantage.exp2()) * 100.0;
-          // uniform 1/board_size^2 steps
-        // let percent_size = 10.0 + 90.0 * (advantage / game.board().size().get().pow(2) as f32);
-
-        let percent_size = {
-          let uniform_count = (game.board().size().get().pow(2) / 4) as f32;
-          let section_count = uniform_count + 1.0;
-          let section_size = 1.0 / section_count;
-
-          let uniform_section_size = section_size * (uniform_count - 1.0);
-
-          let scalar = if advantage < uniform_count {
-            section_size * advantage
-          } else {
-            uniform_section_size + (1.0 - 1.0 / ((advantage - uniform_count) + 1.0).exp2()) * (1.0 - uniform_section_size)
-          };
-
-          scalar * 100.0
+      let total_control = white_control + black_control;
+      let (white_control_fraction, black_control_fraction) = 
+        if total_control > 0 {
+          let white_control_fraction = (white_control as f32) / (total_control as f32);
+          (white_control_fraction, 1.0 - white_control_fraction)
+        } else {
+          (0.5, 0.5)
         };
 
-        bar.style().set_property("height", &format!("{}%", percent_size))?;
-        Ok(())
-      };
+      let white_height_percent = 10.0 + white_control_fraction * 80.0;
+      let black_height_percent = 10.0 + black_control_fraction * 80.0;
 
       let control_bar_light = document.get_element_by_id("control-bar-light").expect("Couldn't get control-bar-light div");
       let control_bar_light: HtmlElement = control_bar_light.dyn_into()?;
-      set_control_bar_length(&control_bar_light, white_control.saturating_sub(black_control))?;
+      control_bar_light.style().set_property("height", &format!("{}%", white_height_percent))?;
 
       let control_bar_dark = document.get_element_by_id("control-bar-dark").expect("Couldn't get control-bar-dark div");
       let control_bar_dark: HtmlElement = control_bar_dark.dyn_into()?;
-      set_control_bar_length(&control_bar_dark, black_control.saturating_sub(white_control))?;
+      control_bar_dark.style().set_property("height", &format!("{}%", black_height_percent))?;
 
       let get_status_text = || -> Result<String, std::fmt::Error> {
         let mut status_text = String::new();
