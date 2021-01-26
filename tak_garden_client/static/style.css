@@ -61,19 +61,23 @@ a:visited {
 
 .control-bar {
   width: 100%;
-  /*position: absolute;*/
 }
 
 .control-bar.light {
   background-color: #f9f9f9;
-  /*top: 0;*/
   position: relative;
+
+    /* TODO the control bar border radius should be a variable */
+  border-top-left-radius: 0.5em;
+  border-top-right-radius: 0.5em;
 }
 
 .control-bar.dark {
   background-color: #555;
-  /*bottom: 0;*/
   position: relative;
+
+  border-bottom-left-radius: 0.5em;
+  border-bottom-right-radius: 0.5em;
 }
 
 .control-count {
