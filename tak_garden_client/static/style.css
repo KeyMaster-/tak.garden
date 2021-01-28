@@ -18,6 +18,10 @@ a:visited {
   color: #aaaaff;
 }
 
+div {
+  font-family: Arial, Helvetica, sans-serif;
+}
+
 .main-wrapper {
   display: flex;
   flex-direction: column;
@@ -86,12 +90,21 @@ a:visited {
   text-align: center;
 }
 
-.control-count.light {
+.control-count.top {
   bottom: 0;
 }
 
-.control-count.dark {
+.control-count.bottom {
   top: 0;
+  line-height: 1.6;
+}
+
+.stone-text.light {
+  color: #ddd;
+}
+
+.stone-text.dark {
+  color: #393939;
 }
 
 .ranks {
