@@ -653,7 +653,7 @@ impl Display {
       let board_wrapper: HtmlElement = document.get_element_by_id("board-wrapper").expect("Couldn't get board-wrapper div").dyn_into()?;
       let board_el: HtmlElement = document.get_element_by_id("board").expect("Couldn't get board div").dyn_into()?;
 
-      let history = document.get_element_by_id("history").expect("Couldn't get history div");
+      let history: HtmlElement = document.get_element_by_id("history").expect("Couldn't get history div").dyn_into()?;
       let files = document.get_element_by_id("files").expect("Couldn't get files div");
       let ranks = document.get_element_by_id("ranks").expect("Couldn't get ranks div");
       let control_display = document.get_element_by_id("control-display").expect("Couldn't get control-display div");
@@ -689,6 +689,8 @@ impl Display {
       let board_dim = square_size * board_size;
       board_el.style().set_property("width", &(board_dim.to_string()))?;
       board_el.style().set_property("height", &(board_dim.to_string()))?;
+
+      history.style().set_property("height", &(board_dim.to_string()))?;
 
         // center the board display on the actual grid of spaces
       let left_offset = main_wrapper_size.0 / 2.0 - board_dim / 2.0 - ranks_size.0 - history_size.0;
