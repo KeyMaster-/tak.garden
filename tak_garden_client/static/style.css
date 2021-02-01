@@ -30,8 +30,13 @@ div {
   height: 100%;
 }
 
-.board-wrapper {
+.board-row {
   flex: none;
+  width: 100%;
+}
+
+.board-wrapper {
+  width: min-content;
   
   display: grid;
   grid-template-columns: 20ch 2ch 1fr 3.5ch;

@@ -651,6 +651,7 @@ impl Display {
       let header = document.get_element_by_id("header").expect("Couldn't get header");
 
       let board_wrapper: HtmlElement = document.get_element_by_id("board-wrapper").expect("Couldn't get board-wrapper div").dyn_into()?;
+      let board_el: HtmlElement = document.get_element_by_id("board").expect("Couldn't get board div").dyn_into()?;
 
       let history = document.get_element_by_id("history").expect("Couldn't get history div");
       let files = document.get_element_by_id("files").expect("Couldn't get files div");
@@ -675,19 +676,23 @@ impl Display {
 
       // TODO I'm basically doing layouting myself at this point. This feels extremely not in the spirit of css
       let available_height = main_wrapper_size.1 - header_size.1 - files_size.1 - status_display_size.1 - input_row_size.1 - output_row_size.1 - footer_size.1;
-      let available_width = main_wrapper_size.0 - history_size.0 - ranks_size.0 - control_display_size.0;
+        // take the maximum of total width of everything to the left and right of the board
+        // then pretend we have that width on either side.
+        // this is necessary so that after we center the wrapper to the board neither side overflows outside of the window.
+      let available_width = main_wrapper_size.0 - (history_size.0 + ranks_size.0).max(control_display_size.0) * 2.0;
 
       let square_size_from_height = available_height / (board_size + 1.0); // The +1 here is to take the stone counter row at the bottom into account
       let square_size_from_width = available_width / board_size;
 
       let square_size = square_size_from_height.min(square_size_from_width);
 
-      let target_width = history_size.0 + ranks_size.0 + square_size * board_size + control_display_size.0;
-      let target_height = square_size * board_size + files_size.1 + square_size; // the final square size accounts for the stone counters
+      let board_dim = square_size * board_size;
+      board_el.style().set_property("width", &(board_dim.to_string()))?;
+      board_el.style().set_property("height", &(board_dim.to_string()))?;
 
-      // TODO Do I need too set the width on the board wrapper? Could I not set the width more directly on the "board" element directly?
-      board_wrapper.style().set_property("width", &(target_width.to_string()))?;
-      board_wrapper.style().set_property("height", &(target_height.to_string()))?;
+        // center the board display on the actual grid of spaces
+      let left_offset = main_wrapper_size.0 / 2.0 - board_dim / 2.0 - ranks_size.0 - history_size.0;
+      board_wrapper.style().set_property("margin-left", &(left_offset.to_string()))?;
 
       Ok(())
     })()
