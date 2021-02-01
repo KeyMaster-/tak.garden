@@ -2,7 +2,7 @@ mod utils;
 
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{Element, HtmlElement};
+use web_sys::{Element, HtmlElement, Window};
 use tak_garden_common::{ServerMessage, ClientMessage};
 use rustak::{
   Game, GameState, MoveState, MoveAction, WinKind,
@@ -642,29 +642,76 @@ impl Display {
 
   fn adjust_board_width(board_size: BoardSize) {
     (|| -> Result<(), JsValue> {
-      let board_size = board_size.get() as i32;
+      let board_size = board_size.get() as f64;
 
       let window = web_sys::window().expect("Couldn't get window");
       let document = window.document().expect("Couldn't get document");
 
+      let main_wrapper = document.get_element_by_id("main-wrapper").expect("Couldn't get main-wrapper div");
+      let header = document.get_element_by_id("header").expect("Couldn't get header");
+
+      let board_wrapper: HtmlElement = document.get_element_by_id("board-wrapper").expect("Couldn't get board-wrapper div").dyn_into()?;
+
+      let history = document.get_element_by_id("history").expect("Couldn't get history div");
       let files = document.get_element_by_id("files").expect("Couldn't get files div");
       let ranks = document.get_element_by_id("ranks").expect("Couldn't get ranks div");
       let control_display = document.get_element_by_id("control-display").expect("Couldn't get control-display div");
-      let board_wrapper = document.get_element_by_id("board-wrapper").expect("Couldn't get board-wrapper div");
-      let board_wrapper: HtmlElement = board_wrapper.dyn_into()?;
 
-      let files_height = files.children().item(0).unwrap().client_height();
-      let square_size = (board_wrapper.offset_height() - files_height) / (board_size + 1);
+      let status_display = document.get_element_by_id("status-display").expect("Couldn't get status-display div");
+      let input_row = document.get_element_by_id("input-row").expect("Couldn't get input-row div");
+      let output_row = document.get_element_by_id("output").expect("Couldn't get output div");
+      let footer = document.get_element_by_id("footer").expect("Couldn't get footer");
 
-      let ranks_width = ranks.client_width();
-      let control_display_width = control_display.client_width();
-      let target_width = square_size * board_size + ranks_width + control_display_width;
+      let main_wrapper_size = get_dimensions(&window, &main_wrapper)?;
+      let header_size = get_dimensions(&window, &header)?;
+      let history_size = get_dimensions(&window, &history)?;
+      let files_size = get_dimensions(&window, &files)?;
+      let ranks_size = get_dimensions(&window, &ranks)?;
+      let control_display_size = get_dimensions(&window, &control_display)?;
+      let status_display_size = get_dimensions(&window, &status_display)?;
+      let input_row_size = get_dimensions(&window, &input_row)?;
+      let output_row_size = get_dimensions(&window, &output_row)?;
+      let footer_size = get_dimensions(&window, &footer)?;
+
+      // TODO I'm basically doing layouting myself at this point. This feels extremely not in the spirit of css
+      let available_height = main_wrapper_size.1 - header_size.1 - files_size.1 - status_display_size.1 - input_row_size.1 - output_row_size.1 - footer_size.1;
+      let available_width = main_wrapper_size.0 - history_size.0 - ranks_size.0 - control_display_size.0;
+
+      let square_size_from_height = available_height / (board_size + 1.0); // The +1 here is to take the stone counter row at the bottom into account
+      let square_size_from_width = available_width / board_size;
+
+      let square_size = square_size_from_height.min(square_size_from_width);
+
+      let target_width = history_size.0 + ranks_size.0 + square_size * board_size + control_display_size.0;
+      let target_height = square_size * board_size + files_size.1 + square_size; // the final square size accounts for the stone counters
 
       // TODO Do I need too set the width on the board wrapper? Could I not set the width more directly on the "board" element directly?
       board_wrapper.style().set_property("width", &(target_width.to_string()))?;
+      board_wrapper.style().set_property("height", &(target_height.to_string()))?;
 
       Ok(())
     })()
       .unwrap_or_else(|e| console_log!("Display::adjust_board_width error: {:?}", e));
   }
+}
+
+// Based on this code: https://github.com/hughsk/element-size/blob/master/index.js
+fn get_dimensions(window: &Window, element: &Element) -> Result<(f64, f64), JsValue> {
+  let client_rect = element.get_bounding_client_rect();
+  let mut width = client_rect.width();
+  let mut height = client_rect.height();
+
+  let computed_style = window.get_computed_style(element)?;
+  if let Some(computed_style) = computed_style {
+      // TODO no idea if these values always have px at the end. If not this will panic during the parse -> expect
+    width += 
+      computed_style.get_property_value("margin-left")?.trim_end_matches("px").parse::<f64>().unwrap_or(0.0) +
+      computed_style.get_property_value("margin-right")?.trim_end_matches("px").parse::<f64>().unwrap_or(0.0);
+
+    height += 
+      computed_style.get_property_value("margin-top")?.trim_end_matches("px").parse::<f64>().unwrap_or(0.0) +
+      computed_style.get_property_value("margin-bottom")?.trim_end_matches("px").parse::<f64>().unwrap_or(0.0);
+  }
+
+  Ok((width, height))
 }

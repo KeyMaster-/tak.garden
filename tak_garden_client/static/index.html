@@ -5,9 +5,11 @@
       <link rel="stylesheet" href="style.css">
   </head>
   <body>
-    <div class="main-wrapper">
-      <h1>Tak Garden</h1>
+    <div id="main-wrapper" class="main-wrapper">
+      <h1 id="header">Tak Garden</h1>
       <div id="board-wrapper" class="board-wrapper">
+        <div id="history" class="history">
+        </div>
         <div id="ranks" class="ranks"></div>
         <div id="board" class="board">
           <div id="spaces" class="spaces"></div>
@@ -45,19 +47,19 @@
           </div>
         </div>
       </div>
-      <div class="status-display">
+      <div id="status-display" class="status-display">
         <span id="game_status"></span>
         <span style="white-space: pre"> </span>
         <span id="player_status"></span>
       </div>
-      <div class="input-row">
+      <div id="input-row" class="input-row">
         <input type="text" id="input" />
         <button type="submit" id="submit-move">Submit Interactive Move</button>
       </div>
       <p id="output">
         Connecting...
       </p>
-      <footer>Game info: <a href="https://cheapass.com/tak/">cheapass.com/tak</a> | Website by Tilman Schmidt <a href="https://www.twitter.com/keymaster_">(@keymaster_)</a> | Design adapted from <a href="https://ptn.ninja">ptn.ninja</a></footer>
+      <footer id="footer">Game info: <a href="https://cheapass.com/tak/">cheapass.com/tak</a> | Website by Tilman Schmidt <a href="https://www.twitter.com/keymaster_">(@keymaster_)</a> | Design adapted from <a href="https://ptn.ninja">ptn.ninja</a></footer>
     </div>
     <script src="./bootstrap.js"></script>
   </body>

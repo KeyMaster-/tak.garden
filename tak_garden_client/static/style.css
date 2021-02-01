@@ -31,15 +31,15 @@ div {
 }
 
 .board-wrapper {
-  flex: auto;
+  flex: none;
   
   display: grid;
-  grid-template-columns: 1.5em 1fr 2.5em;
+  grid-template-columns: 20ch 2ch 1fr 3.5ch;
   grid-template-rows: 1fr auto auto;
   grid-template-areas: 
-    "ranks board control-display"
-    ".     files           ."
-    ".     stone-counters  .";
+    "history ranks board control-display"
+    ".       .     files           ."
+    ".       .     stone-counters  .";
 
     /* This is not quite correct. Ideally we'd limit our height such that the aspect-ratio calculated width does not
     exceed the viewport width. However doing it this way seems to limit the width to slightly narrower than the window width
@@ -49,22 +49,73 @@ div {
   user-select: none;
 }
 
+.stone-text.light {
+  color: #ddd;
+}
+
+.stone-text.dark {
+  color: #393939;
+}
+
+.history {
+  grid-area: history;
+
+  border: 2px solid #aaa;
+}
+
+.ranks {
+  grid-area: ranks;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-around;
+}
+
+.ranks div {
+  font-size: 20px;
+  color: #ddd;
+}
+
+.files {
+  grid-area: files;
+  display: flex;
+  flex-direction: row;
+  justify-content: space-around;
+}
+
+.files div {
+  font-size: 20px;
+  color: #ddd;
+}
+
+.counter-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.counter-container > .stone {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
 .control-display {
   grid-area: control-display;
   width: 100%;
   height: 100%;
 
+  margin-left: 2px;
+
   display: flex;
   flex-direction: column;
-
-  border-left: 2px solid #222;
-  border-right: 2px solid #222;
 
   position: relative;
 }
 
 .control-bar {
   width: 100%;
+  font-size: 22px;
 }
 
 .control-bar.light {
@@ -72,16 +123,16 @@ div {
   position: relative;
 
     /* TODO the control bar border radius should be a variable */
-  border-top-left-radius: 0.5em;
-  border-top-right-radius: 0.5em;
+  border-top-left-radius: 1ch;
+  border-top-right-radius: 1ch;
 }
 
 .control-bar.dark {
   background-color: #555;
   position: relative;
 
-  border-bottom-left-radius: 0.5em;
-  border-bottom-right-radius: 0.5em;
+  border-bottom-left-radius: 1ch;
+  border-bottom-right-radius: 1ch;
 }
 
 .control-count {
@@ -97,39 +148,6 @@ div {
 .control-count.bottom {
   top: 0;
   line-height: 1.6;
-}
-
-.stone-text.light {
-  color: #ddd;
-}
-
-.stone-text.dark {
-  color: #393939;
-}
-
-.ranks {
-  grid-area: ranks;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: space-around;
-}
-
-.ranks div {
-  font-size: 22px;
-  color: #ddd;
-}
-
-.files {
-  grid-area: files;
-  display: flex;
-  flex-direction: row;
-  justify-content: space-around;
-}
-
-.files div {
-  font-size: 22px;
-  color: #ddd;
 }
 
 .board {
@@ -204,6 +222,7 @@ div {
 .stone-counters {
   grid-area: stone-counters;
   display: grid;
+  font-size: 20px;
 }
 
 .stone-counter-light-flat {
@@ -228,18 +247,6 @@ div {
   content: "";
   display: block;
   padding-bottom: 100%;
-}
-
-.counter-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-
-.counter-container > .stone {
-  display: flex;
-  justify-content: center;
-  align-items: center;
 }
 
 .status-display {
