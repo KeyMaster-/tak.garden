@@ -62,31 +62,45 @@ div {
   color: #393939;
 }
 
-.history {
+.history-wrapper {
   grid-area: history;
 
   box-sizing: border-box; /* Makes it so that the size set on this element denotes the size _including_ the border*/
   border: 2px solid #aaa;
 
+  padding: 0.5em;
+}
+
+/* The history is done as a css grid instead of a <table> to enable the scroll-snap property.
+   scroll-snap only snaps to child elements of the scrolling container, and with a table.
+   the scroll points are the table elements, but the history container just scrolls one big 
+   table element.*/
+.history {
+  height: 100%; /* Force the list to fit the height of the wrapper even if the list is longer than the wrapper's height */
   overflow-y: auto;
+
+  display: grid;
+  grid-template-columns: 2ch 1fr 1fr;
+  grid-auto-rows: max-content;
+
+  /* Gutters */
+  grid-row-gap: 0.2em;
+  grid-column-gap: 1ch;
+
+  scroll-snap-type: y mandatory;
 }
 
-.history table {
-  width: 100%;
-}
-
-.history td {
+.history span {
   color: #f9f9f9;
+  scroll-snap-align: start;
 }
 
-.history .move-number {
+.turn-number {
   text-align: right;
-  width: 3ch;
 }
 
-.history .move-text {
+.move-text {
   text-align: left;
-  /*width: 42.5%;*/
 }
 
 .ranks {

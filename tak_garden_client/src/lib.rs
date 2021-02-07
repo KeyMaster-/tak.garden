@@ -5,7 +5,7 @@ use wasm_bindgen::JsCast;
 use web_sys::{Element, HtmlElement, Window};
 use tak_garden_common::{ServerMessage, ClientMessage};
 use rustak::{
-  Game, GameState, MoveState, MoveAction, WinKind,
+  Game, GameState, Move, MoveState, MoveAction, WinKind,
   BoardSize, Location, Color, 
   StoneKind, StoneStack,
   ActionInvalidReason, PlacementInvalidReason, MovementInvalidReason,
@@ -87,7 +87,7 @@ impl ClientInterface {
 
 struct Client {
   connection: Connection,
-  game: Option<Game>,
+  game: Option<(Vec<Move>, Game)>, // TODO game_history, see server lib.rs
   controlled_color: Option<Color>,
   display: Option<Display>, // Is only None before Client is fully initialised. TODO replace with LateInit from once_cell (given in docs)
 }
@@ -317,7 +317,7 @@ impl Client {
       Ok(())
     };
 
-    if let Some(game) = &mut self.game {
+    if let Some((_, game)) = &mut self.game { // TODO game_history
       if let Some(controlled_color) = self.controlled_color {
         if game.active_color() == controlled_color {
           handle_click(game, click_loc)
@@ -332,7 +332,7 @@ impl Client {
   }
 
   fn submit_move(&mut self) {
-    if let Some(m) = self.game.as_ref().unwrap().move_state().clone().to_move() {
+    if let Some(m) = self.game.as_ref().unwrap().1.move_state().clone().to_move() { // TODO game_history
       self.send_message(&ClientMessage::Move(m)); // TODO copied from send_move, consolidate
     }
     // TODO if move gets rejected from server we need to revert what we did
@@ -379,7 +379,7 @@ impl Client {
   }
 
   fn adjust_board_width(&self) {
-    if let Some(game) = self.game.as_ref() {
+    if let Some((_, game)) = self.game.as_ref() { // TODO game_history
       Display::adjust_board_width(game.board().size())
     }
   }
@@ -409,9 +409,10 @@ impl Display {
     }
   }
 
-  fn update(&mut self, game: &Game) {
+  fn update(&mut self, game: &(Vec<Move>, Game)) {
       // TODO be consistent about error handling in here - some stuff is `expect`ed, some is handled with the ? operator
     (|| -> Result<(), JsValue> {
+      let (moves, game) = game;
       let board_size = game.board().size().get();
 
       let window = web_sys::window().expect("Couldn't get window");
@@ -592,6 +593,47 @@ impl Display {
       let control_bar_dark: HtmlElement = control_bar_dark.dyn_into()?;
       control_bar_dark.style().set_property("height", &format!("{}%", black_height_percent))?;
 
+      let history = document.get_element_by_id("history").expect("Couldn't get history div");
+      // let history_table = document.get_element_by_id("history-table").expect("Couldn't get history-table element");
+
+        // Determine if we are scrolled to the bottom of the moves list before we clear & reconstruct it
+      let scroll_to_restore = if history.scroll_top() < (history.scroll_height() - history.client_height()) {
+        Some(history.scroll_top())
+      } else {
+        None
+      };
+
+      clear_children(&history)?;
+      let turn_count = (moves.len() + 1) / 2; // +1 to "round up". 1 or 2 moves == 1 turn
+      for i in 0..turn_count {
+        let turn_number: HtmlElement = document.create_element("span")?.dyn_into()?;
+        turn_number.class_list().add_1("turn-number")?;
+        let white_move_text: HtmlElement = document.create_element("span")?.dyn_into()?;
+        white_move_text.class_list().add_1("move-text")?;
+        let black_move_text: HtmlElement = document.create_element("span")?.dyn_into()?;
+        black_move_text.class_list().add_1("move-text")?;
+
+        turn_number.set_inner_text(&format!("{}.", i + 1));
+
+        if let Some(m) = moves.get(i * 2 + 0) {
+          white_move_text.set_inner_text(&m.to_string());
+        }
+        if let Some(m) = moves.get(i * 2 + 1) {
+          black_move_text.set_inner_text(&m.to_string());
+        }
+
+        history.append_child(&turn_number)?;
+        history.append_child(&white_move_text)?;
+        history.append_child(&black_move_text)?;
+      }
+
+      if let Some(scroll_top) = scroll_to_restore {
+        history.set_scroll_top(scroll_top)
+      } else {
+        history.set_scroll_top(history.scroll_height() - history.client_height());
+      }
+      
+
       let get_status_text = || -> Result<String, std::fmt::Error> {
         let mut status_text = String::new();
         match game.state() {
@@ -651,7 +693,7 @@ impl Display {
       let board_wrapper: HtmlElement = document.get_element_by_id("board-wrapper").expect("Couldn't get board-wrapper div").dyn_into()?;
       let board_el: HtmlElement = document.get_element_by_id("board").expect("Couldn't get board div").dyn_into()?;
 
-      let history: HtmlElement = document.get_element_by_id("history").expect("Couldn't get history div").dyn_into()?;
+      let history_wrapper: HtmlElement = document.get_element_by_id("history-wrapper").expect("Couldn't get history-wrapper div").dyn_into()?;
       let files = document.get_element_by_id("files").expect("Couldn't get files div");
       let ranks = document.get_element_by_id("ranks").expect("Couldn't get ranks div");
       let control_display = document.get_element_by_id("control-display").expect("Couldn't get control-display div");
@@ -663,7 +705,7 @@ impl Display {
 
       let main_wrapper_size = get_dimensions(&window, &main_wrapper)?;
       let header_size = get_dimensions(&window, &header)?;
-      let history_size = get_dimensions(&window, &history)?;
+      let history_wrapper_size = get_dimensions(&window, &history_wrapper)?;
       let files_size = get_dimensions(&window, &files)?;
       let ranks_size = get_dimensions(&window, &ranks)?;
       let control_display_size = get_dimensions(&window, &control_display)?;
@@ -677,7 +719,7 @@ impl Display {
         // take the maximum of total width of everything to the left and right of the board
         // then pretend we have that width on either side.
         // this is necessary so that after we center the wrapper to the board neither side overflows outside of the window.
-      let available_width = main_wrapper_size.0 - (history_size.0 + ranks_size.0).max(control_display_size.0) * 2.0;
+      let available_width = main_wrapper_size.0 - (history_wrapper_size.0 + ranks_size.0).max(control_display_size.0) * 2.0;
 
       let square_size_from_height = available_height / (board_size + 1.0); // The +1 here is to take the stone counter row at the bottom into account
       let square_size_from_width = available_width / board_size;
@@ -689,7 +731,7 @@ impl Display {
         board_el.style().set_property("width", &(size.to_string()))?;
         board_el.style().set_property("height", &(size.to_string()))?;
 
-        history.style().set_property("height", &(size.to_string()))?;
+        history_wrapper.style().set_property("height", &(size.to_string()))?;
 
         Ok(())
       };
@@ -708,7 +750,7 @@ impl Display {
       }
 
         // center the board display on the actual grid of spaces
-      let left_offset = main_wrapper_size.0 / 2.0 - board_size / 2.0 - ranks_size.0 - history_size.0;
+      let left_offset = main_wrapper_size.0 / 2.0 - board_size / 2.0 - ranks_size.0 - history_wrapper_size.0;
       board_wrapper.style().set_property("margin-left", &(left_offset.to_string()))?;
 
       Ok(())
