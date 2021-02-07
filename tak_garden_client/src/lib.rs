@@ -253,14 +253,12 @@ impl Client {
           );
 
           if let Some(dir) = dir {
-            let opposite = dir.opposite();
-
-            let mut loc = cur_loc;
+              // Get all locations between start and cur_loc, excluding both start and cur_loc
             let mut prev_locs = vec![];
-              // Get all locations between cur_loc and start, excluding cur_loc, including start
-            while loc != start {
-              loc = loc.move_along(opposite, game.board().size()).unwrap(); // TODO error handling for the unwrap
+            let mut loc = start.move_along(dir, game.board().size()).unwrap();
+            while loc != cur_loc {
               prev_locs.push(loc);
+              loc = loc.move_along(dir, game.board().size()).unwrap();
             }
 
             space_actions.extend(prev_locs.into_iter().map(|target_loc| {
