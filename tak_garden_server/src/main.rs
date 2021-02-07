@@ -15,7 +15,9 @@ use tak_garden_common::{ServerMessage, ClientMessage};
 const NO_CONNECTION_ID: usize = 0;
 static NEXT_CONNECTION_ID: AtomicUsize = AtomicUsize::new(NO_CONNECTION_ID + 1);
 
-type GameState = Arc<RwLock<Game>>;
+  // TODO game_history do a proper struct for moves + game state
+  // Needs more thinking though
+type GameState = Arc<RwLock<(Vec<Move>, Game)>>;
   // Needs to be a result due to the unbounded sender -> websocket forwarding
   // Unsure what exactly the reasoning is.
 type ConnectionSender = mpsc::UnboundedSender<Result<Message, warp::Error>>;
@@ -25,7 +27,7 @@ type ControllerIDs = Arc<(AtomicUsize, AtomicUsize)>;
 #[tokio::main]
 async fn main() {
 
-  let game = Arc::new(RwLock::new(Game::new(BoardSize::new(5).unwrap())));
+  let game = Arc::new(RwLock::new((vec![], Game::new(BoardSize::new(5).unwrap())))); // TODO game_history
     // make a filter that provides a reference to our game state
   let game = warp::any().map(move || game.clone());
 
@@ -115,13 +117,13 @@ async fn on_connected(ws: WebSocket, game: GameState, connections: Connections, 
     match client_msg {
       ClientMessage::Move(m) => on_move(my_id, m, &game, &connections, &tx_2, &controller_ids).await,
       ClientMessage::ResetGame(size) => {
-        *game.write().await = Game::new(size);
+        *game.write().await = (vec![], Game::new(size)); // TODO game_history
         broadcast_game_state(&game, &connections).await;
       },
       ClientMessage::UndoMove => {
         println!("Undoing last move");
         {
-          let mut game = game.write().await;
+          let (ref mut moves, ref mut game) = *game.write().await; // TODO game_history
 
             // TODO give game an "undo last full move" method
             // that method will have to also handle potentially being in a partial move, which this doesn't
@@ -131,6 +133,7 @@ async fn on_connected(ws: WebSocket, game: GameState, connections: Connections, 
               break;
             }
           }
+          moves.pop(); // TODO game_history
         }
         broadcast_game_state(&game, &connections).await;
       }
@@ -152,7 +155,8 @@ async fn on_move(conn_id: usize, m: Move, game: &GameState, connections: &Connec
 
       // Write access is constrained to this block, so that later on we can read the game state
       // for broadcasting it.
-    let mut game = game.write().await;
+    let (ref mut moves, ref mut game) = *game.write().await; // TODO game_history
+
     let active_color = game.active_color();
     let is_color_controller = match active_color {
       Color::White => conn_id == controller_ids.0.load(Ordering::Relaxed),
@@ -161,6 +165,7 @@ async fn on_move(conn_id: usize, m: Move, game: &GameState, connections: &Connec
 
     if is_color_controller {
       println!("Move: {}, {}", active_color, m);
+      moves.push(m.clone()); // TODO game_history
       Some(game.make_move(m))
     } else {
       None

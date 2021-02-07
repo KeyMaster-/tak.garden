@@ -5,7 +5,7 @@ use serde::{Serialize, Deserialize};
 pub enum ServerMessage {
   Control(Option<Color>), // TODO combine this into the game state message
   ActionInvalid(String), // with reason message
-  GameState(Game)
+  GameState((Vec<Move>, Game))
 }
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ClientMessage {
