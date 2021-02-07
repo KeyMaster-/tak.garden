@@ -685,15 +685,32 @@ impl Display {
       let square_size_from_width = available_width / board_size;
 
       let square_size = square_size_from_height.min(square_size_from_width);
+      let mut board_size = square_size * board_size;
 
-      let board_dim = square_size * board_size;
-      board_el.style().set_property("width", &(board_dim.to_string()))?;
-      board_el.style().set_property("height", &(board_dim.to_string()))?;
+      let set_board_size = |size: f64| -> std::result::Result<(), JsValue> {
+        board_el.style().set_property("width", &(size.to_string()))?;
+        board_el.style().set_property("height", &(size.to_string()))?;
 
-      history.style().set_property("height", &(board_dim.to_string()))?;
+        history.style().set_property("height", &(size.to_string()))?;
+
+        Ok(())
+      };
+
+      // Set the board element's size based on our calculations
+      set_board_size(board_size)?;
+
+      // The ranks element generally shrinks/expands to match the size of the board element that we set.
+      // However if the board element is smaller than the ranks, ranks determines the minimum height of the row.
+      // After we set the board size, we measure the ranks height again to see if we went below the minimum set by it.
+      // If we did, set our board size to match the ranks height.
+      let ranks_size = get_dimensions(&window, &ranks)?;
+      if ranks_size.1 > board_size {
+        board_size = ranks_size.1;
+        set_board_size(board_size)?;
+      }
 
         // center the board display on the actual grid of spaces
-      let left_offset = main_wrapper_size.0 / 2.0 - board_dim / 2.0 - ranks_size.0 - history_size.0;
+      let left_offset = main_wrapper_size.0 / 2.0 - board_size / 2.0 - ranks_size.0 - history_size.0;
       board_wrapper.style().set_property("margin-left", &(left_offset.to_string()))?;
 
       Ok(())
