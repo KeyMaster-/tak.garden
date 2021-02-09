@@ -37,6 +37,7 @@ div {
 
 .board-wrapper {
   width: min-content;
+  font-size: 20px; /* this lives here so that ch and em reference the correct font size */
 
   display: grid;
   grid-template-columns: 20ch 2ch 1fr 3.5ch;
