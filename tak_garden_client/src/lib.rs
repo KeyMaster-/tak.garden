@@ -224,7 +224,7 @@ impl Client {
             game.undo();
           }
         },
-        MoveState::Movement { start, cur_loc, dir, .. } => {
+        MoveState::Movement { start, cur_loc, dir, carry, .. } => {
           // Set up a mapping of space -> resulting action on the game
           let mut space_actions: Vec<(Location, Box<dyn FnOnce(&mut Game)->Result<(), ActionInvalidReason>>)> = vec![];
 
@@ -278,27 +278,29 @@ impl Client {
             }))
           }
 
-          let move_drop_locs = 
-            if let Some(dir) = dir {
-              cur_loc.move_along(dir, board.size()).iter().map(|&loc| (loc, dir)).collect()
-            } else {
-              cur_loc.neighbours_with_direction(board.size())
-            };
+          if carry.count() != 0 { // if we're out of stones, we can't do a MoveAndDropOne action
+            let move_drop_locs = 
+              if let Some(dir) = dir {
+                cur_loc.move_along(dir, board.size()).iter().map(|&loc| (loc, dir)).collect()
+              } else {
+                cur_loc.neighbours_with_direction(board.size())
+              };
 
-          space_actions.extend(move_drop_locs.into_iter().map(|(loc, dir)| {
-            (loc, Box::new(
-              move |game: &mut Game| -> _ {
-                let action = MoveAction::MoveAndDropOne { dir: dir };
-                game.do_action(action).or_else(|e| {
-                  match e {
-                    DropTooLarge => Ok(()),
-                    MovementInvalid(DropNotAllowed) => Ok(()),
-                    _ => Err(e)
-                  }
-                })
-              }) as Box<_>
-            )
-          }));
+            space_actions.extend(move_drop_locs.into_iter().map(|(loc, dir)| {
+              (loc, Box::new(
+                move |game: &mut Game| -> _ {
+                  let action = MoveAction::MoveAndDropOne { dir: dir };
+                  game.do_action(action).or_else(|e| {
+                    match e {
+                      DropTooLarge => Ok(()),
+                      MovementInvalid(DropNotAllowed) => Ok(()),
+                      _ => Err(e)
+                    }
+                  })
+                }) as Box<_>
+              )
+            }));
+          }
 
           if let Some((_, action)) = space_actions.into_iter().find(|(loc, _)| *loc == click_loc) {
             action(game)?;
