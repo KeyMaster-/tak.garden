@@ -5,7 +5,7 @@ use wasm_bindgen::JsCast;
 use web_sys::{Element, HtmlElement, Window};
 use tak_garden_common::{ServerMessage, ClientMessage};
 use rustak::{
-  Game, GameState, Move, MoveState, MoveAction, WinKind,
+  MoveHistory, Game, GameState, MoveState, MoveAction, WinKind, 
   BoardSize, Location, Color, 
   StoneKind, StoneStack,
   ActionInvalidReason, PlacementInvalidReason, MovementInvalidReason,
@@ -85,9 +85,15 @@ impl ClientInterface {
   }
 }
 
+struct MatchState {
+  history: MoveHistory,
+  display_move_idx: usize,
+  play_state: Game
+}
+
 struct Client {
   connection: Connection,
-  game: Option<(Vec<Move>, Game)>, // TODO game_history, see server lib.rs
+  match_state: Option<MatchState>,
   controlled_color: Option<Color>,
   display: Option<Display>, // Is only None before Client is fully initialised. TODO replace with LateInit from once_cell (given in docs)
 }
@@ -101,7 +107,7 @@ impl Client {
   fn new(connection: Connection) -> Self {
     Self {
       connection,
-      game: None,
+      match_state: None,
       controlled_color: None,
       display: None
     }
@@ -141,9 +147,18 @@ impl Client {
           // TODO consolidate callsites for this logic. See above.
           self.adjust_board_width();
         },
-        ServerMessage::GameState(game) => {
-          self.game = Some(game);
-          self.display.as_mut().unwrap().update(self.game.as_ref().unwrap());
+        ServerMessage::GameState(moves, size) => {
+            // TODO error handling instead of panic?
+          let history = MoveHistory::from_moves(moves, size).unwrap_or_else(|e| panic!("Move list sent by server was invalid: Move {}, Reason {}", e.0, e.1));
+          let display_move_idx = history.moves().len() + 1;
+          let play_state = history.last();
+          let match_state = MatchState {
+            history,
+            display_move_idx,
+            play_state
+          };
+          self.match_state = Some(match_state);
+          self.display.as_mut().unwrap().update(self.match_state.as_ref().unwrap());
         }
       }
 
@@ -318,28 +333,40 @@ impl Client {
       Ok(())
     };
 
-    if let Some((_, game)) = &mut self.game { // TODO game_history
-      if let Some(controlled_color) = self.controlled_color {
-        if game.active_color() == controlled_color {
-          handle_click(game, click_loc)
-            .unwrap_or_else(|e| console_log!("Client::on_click attempted an invalid action: {}", e));
+    if let Some(match_state) = &mut self.match_state {
+        // TODO represent "viewing the play state" in a more ergonomic way
+      if match_state.display_move_idx == match_state.history.moves().len() + 1 {
+        if let Some(controlled_color) = self.controlled_color {
+          let play_state = &mut match_state.play_state;
+          if play_state.active_color() == controlled_color {
+            handle_click(play_state, click_loc)
+              .unwrap_or_else(|e| console_log!("Client::on_click attempted an invalid action: {}", e));
+          }
         }
       }
     } else {
       console_log!("Client::on_click called with no game present!");
     }
 
-    self.display.as_mut().unwrap().update(self.game.as_ref().unwrap());
+    self.display.as_mut().unwrap().update(self.match_state.as_ref().unwrap());
   }
 
   fn on_history_click(&mut self, move_idx: usize) {
-    console_log!("Show move {}", move_idx);
-    // self.display.as_mut().unwrap().update(self.game.as_ref().unwrap()); 
+    if let Some(match_state) = &mut self.match_state {
+      match_state.display_move_idx = move_idx;
+    }
+
+    self.display.as_mut().unwrap().update(self.match_state.as_ref().unwrap());
   }
 
   fn submit_move(&mut self) {
-    if let Some(m) = self.game.as_mut().unwrap().1.finalise_move() { // TODO game_history
-      self.send_message(&ClientMessage::Move(m)); // TODO copied from send_move, consolidate
+    if let Some(match_state) = &mut self.match_state {
+        // TODO represent "viewing the play state" in a more ergonomic way
+      if match_state.display_move_idx == match_state.history.moves().len() + 1 {
+        if let Some(m) = match_state.play_state.finalise_move() {
+          self.send_message(&ClientMessage::Move(m)); // TODO copied from send_move, consolidate
+        }
+      }
     }
     // TODO if move gets rejected from server we need to revert what we did
   }
@@ -385,8 +412,8 @@ impl Client {
   }
 
   fn adjust_board_width(&self) {
-    if let Some((_, game)) = self.game.as_ref() { // TODO game_history
-      Display::adjust_board_width(game.board().size())
+    if let Some(match_state) = self.match_state.as_ref() { // TODO game_history
+      Display::adjust_board_width(match_state.play_state.board().size())
     }
   }
 }
@@ -415,10 +442,18 @@ impl Display {
     }
   }
 
-  fn update(&mut self, game: &(Vec<Move>, Game)) {
+  fn update(&mut self, match_state: &MatchState) {
       // TODO be consistent about error handling in here - some stuff is `expect`ed, some is handled with the ? operator
     (|| -> Result<(), JsValue> {
-      let (moves, game) = game;
+
+        // TODO this logic should live somewhere else, and this function should just take a move list + a game state to display
+        // TODO represent "viewing the play state" in a more ergonomic way
+      let game = if match_state.display_move_idx == match_state.history.moves().len() + 1 { // TODO consider making history.state() return an option to make this easier
+        match_state.play_state.clone() // TODO consider storing the "game to display" in one location no matter whether it's a history one or the play state. avoids this clone, but keeps the memory allocated all the time
+      } else {
+        match_state.history.state(match_state.display_move_idx)
+      };
+
       let board_size = game.board().size().get();
 
       let window = web_sys::window().expect("Couldn't get window");
@@ -617,6 +652,7 @@ impl Display {
         // Inclusive loop to add 1 extra element, representing the move in progress
         // That element is useful both to signify who's turn it is, and for the player to click on
         // if it is their turn to get back to their in-progress turn after looking at past game states
+      let moves = match_state.history.moves();
       for move_idx in 0..=moves.len() { 
         if move_idx % 2 == 0 {
           let turn_number: HtmlElement = document.create_element("span")?.dyn_into()?;
@@ -631,13 +667,13 @@ impl Display {
           move_text.set_inner_text(&m.to_string());
         }
 
-        if move_idx == moves.len() {
+        if move_idx == match_state.display_move_idx - 1 { // -1 since move_idx is 0-indexed, but display_move_idx is 1 indexed
           move_text.class_list().add_1("active")?;
         }
 
         let client_ref = self.client_ref.clone();
         let callback = Closure::wrap(Box::new(move || { // TODO prevent default on e: MouseEvent (from web-sys)
-          client_ref.borrow_mut().on_history_click(move_idx);
+          client_ref.borrow_mut().on_history_click(move_idx + 1); // +1 because here we numbered them from 0, but generally the first move has index 1
         }) as Box<dyn Fn()>);
 
         move_text.set_onclick(Some(callback.as_ref().unchecked_ref())); // as_ref().unchecked_ref() gets &Function from Closure

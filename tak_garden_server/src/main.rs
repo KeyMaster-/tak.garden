@@ -9,15 +9,13 @@ use futures::{FutureExt, StreamExt};
 use warp::ws::{WebSocket, Message};
 use warp::Filter;
 
-use rustak::{Game, BoardSize, Color, Move, MoveState};
+use rustak::{BoardSize, Color, Move, MoveHistory};
 use tak_garden_common::{ServerMessage, ClientMessage};
 
 const NO_CONNECTION_ID: usize = 0;
 static NEXT_CONNECTION_ID: AtomicUsize = AtomicUsize::new(NO_CONNECTION_ID + 1);
 
-  // TODO game_history do a proper struct for moves + game state
-  // Needs more thinking though
-type GameState = Arc<RwLock<(Vec<Move>, Game)>>;
+type MatchState = Arc<RwLock<MoveHistory>>;
   // Needs to be a result due to the unbounded sender -> websocket forwarding
   // Unsure what exactly the reasoning is.
 type ConnectionSender = mpsc::UnboundedSender<Result<Message, warp::Error>>;
@@ -27,9 +25,9 @@ type ControllerIDs = Arc<(AtomicUsize, AtomicUsize)>;
 #[tokio::main]
 async fn main() {
 
-  let game = Arc::new(RwLock::new((vec![], Game::new(BoardSize::new(5).unwrap())))); // TODO game_history
+  let match_state = Arc::new(RwLock::new(MoveHistory::new(BoardSize::new(5).unwrap()))); // TODO game_history
     // make a filter that provides a reference to our game state
-  let game = warp::any().map(move || game.clone());
+  let match_state = warp::any().map(move || match_state.clone());
 
   let connections = Connections::default();
   let connections = warp::any().map(move || connections.clone());
@@ -39,11 +37,11 @@ async fn main() {
 
   let echo = warp::path("ws")
     .and(warp::ws())
-    .and(game)
+    .and(match_state)
     .and(connections)
     .and(controller_ids)
-    .map(|ws: warp::ws::Ws, game, connections, controller_ids| {
-      ws.on_upgrade(move |socket| on_connected(socket, game, connections, controller_ids))
+    .map(|ws: warp::ws::Ws, match_state, connections, controller_ids| {
+      ws.on_upgrade(move |socket| on_connected(socket, match_state, connections, controller_ids))
     });
 
   let static_files = warp::fs::dir("dist");
@@ -52,7 +50,7 @@ async fn main() {
     .run(([127, 0, 0, 1], 3030)).await;
 }
 
-async fn on_connected(ws: WebSocket, game: GameState, connections: Connections, controller_ids: ControllerIDs) {
+async fn on_connected(ws: WebSocket, match_state: MatchState, connections: Connections, controller_ids: ControllerIDs) {
     // Since mpsc senders don't implement Eq, we need an id to associate with each
     // connection to be able to store and later remove them in a collection
   let my_id = NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
@@ -90,7 +88,7 @@ async fn on_connected(ws: WebSocket, game: GameState, connections: Connections, 
   };
 
   // send initial state
-  send_game_state(&tx_2, &game).await;
+  send_match_state(&tx_2, &match_state).await;
   send_msg(&tx_2, &ServerMessage::Control(controlled_color));
 
   while let Some(res) = ws_rx.next().await {
@@ -116,27 +114,18 @@ async fn on_connected(ws: WebSocket, game: GameState, connections: Connections, 
 
     let client_msg = deser_res.unwrap();
     match client_msg {
-      ClientMessage::Move(m) => on_move(my_id, m, &game, &connections, &tx_2, &controller_ids).await,
+      ClientMessage::Move(m) => on_move(my_id, m, &match_state, &connections, &tx_2, &controller_ids).await,
       ClientMessage::ResetGame(size) => {
-        *game.write().await = (vec![], Game::new(size)); // TODO game_history
-        broadcast_game_state(&game, &connections).await;
+        *match_state.write().await = MoveHistory::new(size);
+        broadcast_match_state(&match_state, &connections).await;
       },
       ClientMessage::UndoMove => {
         println!("Undoing last move");
         {
-          let (ref mut moves, ref mut game) = *game.write().await; // TODO game_history
-
-            // TODO give game an "undo last full move" method
-            // that method will have to also handle potentially being in a partial move, which this doesn't
-          loop {
-            game.undo();
-            if let MoveState::Start = game.move_state() {
-              break;
-            }
-          }
-          moves.pop(); // TODO game_history
+          let ref mut history = *match_state.write().await;
+          history.undo();
         }
-        broadcast_game_state(&game, &connections).await;
+        broadcast_match_state(&match_state, &connections).await;
       }
     }
   }
@@ -144,7 +133,7 @@ async fn on_connected(ws: WebSocket, game: GameState, connections: Connections, 
   on_disconnected(my_id, &connections, &controller_ids).await;
 }
 
-async fn on_move(conn_id: usize, m: Move, game: &GameState, connections: &Connections, connection_tx: &ConnectionSender, controller_ids: &ControllerIDs) {
+async fn on_move(conn_id: usize, m: Move, match_state: &MatchState, connections: &Connections, connection_tx: &ConnectionSender, controller_ids: &ControllerIDs) {
   let move_res = {
       // Need to get write access here before we're even sure whether we're allowed to make a move.
       // This is because the decision depends on the active color, which is part of the game state.
@@ -156,9 +145,10 @@ async fn on_move(conn_id: usize, m: Move, game: &GameState, connections: &Connec
 
       // Write access is constrained to this block, so that later on we can read the game state
       // for broadcasting it.
-    let (ref mut moves, ref mut game) = *game.write().await; // TODO game_history
+    let ref mut history = *match_state.write().await; // TODO game_history
+    let current_state = history.last();
 
-    let active_color = game.active_color();
+    let active_color = current_state.active_color();
     let is_color_controller = match active_color {
       Color::White => conn_id == controller_ids.0.load(Ordering::Relaxed),
       Color::Black => conn_id == controller_ids.1.load(Ordering::Relaxed),
@@ -166,8 +156,7 @@ async fn on_move(conn_id: usize, m: Move, game: &GameState, connections: &Connec
 
     if is_color_controller {
       println!("Move: {}, {}", active_color, m);
-      moves.push(m.clone()); // TODO game_history
-      Some(game.make_move(m))
+      Some(history.add(m))
     } else {
       None
     }
@@ -177,20 +166,28 @@ async fn on_move(conn_id: usize, m: Move, game: &GameState, connections: &Connec
     if let Err(reason) = move_res {
       send_msg(connection_tx, &ServerMessage::ActionInvalid(format!("{}", reason)));
     } else {
-      broadcast_game_state(game, connections).await;
+      broadcast_match_state(match_state, connections).await;
     }
   } else {
     send_msg(connection_tx, &ServerMessage::ActionInvalid("It's not your turn.".to_string()));
   }
 }
 
-async fn send_game_state(tx: &ConnectionSender, game: &GameState) {
-  let msg = ServerMessage::GameState(game.read().await.clone());
+async fn send_match_state(tx: &ConnectionSender, match_state: &MatchState) {
+  let (moves, size) = {
+    let history = match_state.read().await;
+    (history.moves().to_vec(), history.size())
+  };
+  let msg = ServerMessage::GameState(moves, size);
   send_msg(tx, &msg);
 }
 
-async fn broadcast_game_state(game: &GameState, connections: &Connections) {
-  let msg = ServerMessage::GameState(game.read().await.clone());
+async fn broadcast_match_state(match_state: &MatchState, connections: &Connections) {
+  let (moves, size) = {
+    let history = match_state.read().await;
+    (history.moves().to_vec(), history.size())
+  };
+  let msg = ServerMessage::GameState(moves, size);
 
   for (_, tx) in connections.read().await.iter() {
     send_msg(tx, &msg);
