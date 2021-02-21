@@ -162,7 +162,6 @@ impl Client {
 
       let board = game.board();
 
-      // TODO check that it's your turn
       match game.move_state().clone() {
         MoveState::Start => {
           let target_stack = &board[click_loc];
@@ -334,7 +333,7 @@ impl Client {
   }
 
   fn submit_move(&mut self) {
-    if let Some(m) = self.game.as_ref().unwrap().1.move_state().clone().to_move() { // TODO game_history
+    if let Some(m) = self.game.as_mut().unwrap().1.finalise_move() { // TODO game_history
       self.send_message(&ClientMessage::Move(m)); // TODO copied from send_move, consolidate
     }
     // TODO if move gets rejected from server we need to revert what we did
@@ -449,7 +448,7 @@ impl Display {
             client_ref.borrow_mut().on_click(Location::from_coords(col, (board_size - 1) - row).unwrap());
           }) as Box<dyn Fn()>);
 
-          space.set_onclick(Some(callback.as_ref().unchecked_ref())); // as_ref().unchecked_ref() converts gets &Function from Closure
+          space.set_onclick(Some(callback.as_ref().unchecked_ref())); // as_ref().unchecked_ref() gets &Function from Closure
           self.click_closures.push(callback);
           spaces.append_child(&space)?;
         }
