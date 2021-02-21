@@ -73,9 +73,10 @@ async fn on_connected(ws: WebSocket, game: GameState, connections: Connections, 
   let tx_2 = tx.clone();
   connections.write().await.insert(my_id, tx);
 
-  let is_white_controller = controller_ids.0.compare_and_swap(NO_CONNECTION_ID, my_id, Ordering::Relaxed) == NO_CONNECTION_ID;
+    // TODO read up on ordering and figure out if it matters here
+  let is_white_controller = controller_ids.0.compare_exchange(NO_CONNECTION_ID, my_id, Ordering::Relaxed, Ordering::Relaxed).is_ok();
   let is_black_controller = if !is_white_controller {
-    controller_ids.1.compare_and_swap(NO_CONNECTION_ID, my_id, Ordering::Relaxed) == NO_CONNECTION_ID
+    controller_ids.1.compare_exchange(NO_CONNECTION_ID, my_id, Ordering::Relaxed, Ordering::Relaxed).is_ok()
   } else {
     false
   };
@@ -211,6 +212,8 @@ fn send_msg(tx: &ConnectionSender, msg: &ServerMessage) {
 async fn on_disconnected(my_id: usize, connections: &Connections, controller_ids: &ControllerIDs) {
   connections.write().await.remove(&my_id);
     // remove ourselves as the white or black controller, if we were either
-  controller_ids.0.compare_and_swap(my_id, NO_CONNECTION_ID, Ordering::Relaxed);
-  controller_ids.1.compare_and_swap(my_id, NO_CONNECTION_ID, Ordering::Relaxed);
+  controller_ids.0.compare_exchange(my_id, NO_CONNECTION_ID, Ordering::Relaxed, Ordering::Relaxed)
+    .err().map(|current| if current == my_id { println!("Failed to remove {} as the white player.", my_id);});
+  controller_ids.1.compare_exchange(my_id, NO_CONNECTION_ID, Ordering::Relaxed, Ordering::Relaxed)
+    .err().map(|current| if current == my_id { println!("Failed to remove {} as the black player.", my_id);});
 }
