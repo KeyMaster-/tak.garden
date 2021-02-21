@@ -412,7 +412,7 @@ impl Client {
   }
 
   fn adjust_board_width(&self) {
-    if let Some(match_state) = self.match_state.as_ref() { // TODO game_history
+    if let Some(match_state) = self.match_state.as_ref() {
       Display::adjust_board_width(match_state.play_state.board().size())
     }
   }

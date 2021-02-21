@@ -25,7 +25,7 @@ type ControllerIDs = Arc<(AtomicUsize, AtomicUsize)>;
 #[tokio::main]
 async fn main() {
 
-  let match_state = Arc::new(RwLock::new(MoveHistory::new(BoardSize::new(5).unwrap()))); // TODO game_history
+  let match_state = Arc::new(RwLock::new(MoveHistory::new(BoardSize::new(5).unwrap())));
     // make a filter that provides a reference to our game state
   let match_state = warp::any().map(move || match_state.clone());
 
@@ -145,7 +145,7 @@ async fn on_move(conn_id: usize, m: Move, match_state: &MatchState, connections:
 
       // Write access is constrained to this block, so that later on we can read the game state
       // for broadcasting it.
-    let ref mut history = *match_state.write().await; // TODO game_history
+    let ref mut history = *match_state.write().await;
     let current_state = history.last();
 
     let active_color = current_state.active_color();
