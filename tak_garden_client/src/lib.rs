@@ -332,6 +332,11 @@ impl Client {
     self.display.as_mut().unwrap().update(self.game.as_ref().unwrap());
   }
 
+  fn on_history_click(&mut self, move_idx: usize) {
+    console_log!("Show move {}", move_idx);
+    // self.display.as_mut().unwrap().update(self.game.as_ref().unwrap()); 
+  }
+
   fn submit_move(&mut self) {
     if let Some(m) = self.game.as_mut().unwrap().1.finalise_move() { // TODO game_history
       self.send_message(&ClientMessage::Move(m)); // TODO copied from send_move, consolidate
@@ -419,6 +424,10 @@ impl Display {
       let window = web_sys::window().expect("Couldn't get window");
       let document = window.document().expect("Couldn't get document");
 
+        // this stores all on-click closures for the whole display
+        // will get re-populated by several parts of display building
+      self.click_closures.clear();
+
       // set board wrapper classes
       let board_wrapper = document.get_element_by_id("board-wrapper").expect("Couldn't get board-wrapper div");
       board_wrapper.set_class_name("");
@@ -427,7 +436,6 @@ impl Display {
       // re-populate spaces divs
       let spaces = document.get_element_by_id("spaces").expect("Couldn't get spaces div");
       clear_children(&spaces)?;
-      self.click_closures.clear();
 
       for row in 0..board_size {
         for col in 0..board_size {
@@ -605,27 +613,37 @@ impl Display {
       };
 
       clear_children(&history)?;
-      let turn_count = (moves.len() + 1) / 2; // +1 to "round up". 1 or 2 moves == 1 turn
-      for i in 0..turn_count {
-        let turn_number: HtmlElement = document.create_element("span")?.dyn_into()?;
-        turn_number.class_list().add_1("turn-number")?;
-        let white_move_text: HtmlElement = document.create_element("span")?.dyn_into()?;
-        white_move_text.class_list().add_1("move-text")?;
-        let black_move_text: HtmlElement = document.create_element("span")?.dyn_into()?;
-        black_move_text.class_list().add_1("move-text")?;
 
-        turn_number.set_inner_text(&format!("{}.", i + 1));
-
-        if let Some(m) = moves.get(i * 2 + 0) {
-          white_move_text.set_inner_text(&m.to_string());
-        }
-        if let Some(m) = moves.get(i * 2 + 1) {
-          black_move_text.set_inner_text(&m.to_string());
+        // Inclusive loop to add 1 extra element, representing the move in progress
+        // That element is useful both to signify who's turn it is, and for the player to click on
+        // if it is their turn to get back to their in-progress turn after looking at past game states
+      for move_idx in 0..=moves.len() { 
+        if move_idx % 2 == 0 {
+          let turn_number: HtmlElement = document.create_element("span")?.dyn_into()?;
+          turn_number.class_list().add_1("turn-number")?;
+          turn_number.set_inner_text(&format!("{}.", move_idx / 2 + 1));
+          history.append_child(&turn_number)?;  
         }
 
-        history.append_child(&turn_number)?;
-        history.append_child(&white_move_text)?;
-        history.append_child(&black_move_text)?;
+        let move_text: HtmlElement = document.create_element("span")?.dyn_into()?;
+        move_text.class_list().add_1("move-text")?;
+        if let Some(m) = moves.get(move_idx) {
+          move_text.set_inner_text(&m.to_string());
+        }
+
+        if move_idx == moves.len() {
+          move_text.class_list().add_1("active")?;
+        }
+
+        let client_ref = self.client_ref.clone();
+        let callback = Closure::wrap(Box::new(move || { // TODO prevent default on e: MouseEvent (from web-sys)
+          client_ref.borrow_mut().on_history_click(move_idx);
+        }) as Box<dyn Fn()>);
+
+        move_text.set_onclick(Some(callback.as_ref().unchecked_ref())); // as_ref().unchecked_ref() gets &Function from Closure
+        self.click_closures.push(callback);
+
+        history.append_child(&move_text)?;
       }
 
       if let Some(scroll_top) = scroll_to_restore {
