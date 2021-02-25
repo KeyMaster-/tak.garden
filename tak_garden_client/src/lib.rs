@@ -87,8 +87,8 @@ impl ClientInterface {
 
 struct MatchState {
   history: MoveHistory,
-  display_move_idx: usize,
-  play_state: Game
+  display_move_idx: usize, // TODO this is now only used to figure it if we're viewing the last state. Combine this with state in a more ergonomic way
+  game_state: Game,
 }
 
 struct Client {
@@ -150,12 +150,12 @@ impl Client {
         ServerMessage::GameState(moves, size) => {
             // TODO error handling instead of panic?
           let history = MoveHistory::from_moves(moves, size).unwrap_or_else(|e| panic!("Move list sent by server was invalid: Move {}, Reason {}", e.0, e.1));
-          let display_move_idx = history.moves().len() + 1;
-          let play_state = history.last();
+          let display_move_idx = history.moves().len();
+          let game_state = history.last();
           let match_state = MatchState {
             history,
             display_move_idx,
-            play_state
+            game_state
           };
           self.match_state = Some(match_state);
           self.display.as_mut().unwrap().update(self.match_state.as_ref().unwrap());
@@ -335,11 +335,11 @@ impl Client {
 
     if let Some(match_state) = &mut self.match_state {
         // TODO represent "viewing the play state" in a more ergonomic way
-      if match_state.display_move_idx == match_state.history.moves().len() + 1 {
+      if match_state.display_move_idx == match_state.history.moves().len() {
         if let Some(controlled_color) = self.controlled_color {
-          let play_state = &mut match_state.play_state;
-          if play_state.active_color() == controlled_color {
-            handle_click(play_state, click_loc)
+          let game_state = &mut match_state.game_state;
+          if game_state.active_color() == controlled_color {
+            handle_click(game_state, click_loc)
               .unwrap_or_else(|e| console_log!("Client::on_click attempted an invalid action: {}", e));
           }
         }
@@ -354,6 +354,7 @@ impl Client {
   fn on_history_click(&mut self, move_idx: usize) {
     if let Some(match_state) = &mut self.match_state {
       match_state.display_move_idx = move_idx;
+      match_state.game_state = match_state.history.state(move_idx);
     }
 
     self.display.as_mut().unwrap().update(self.match_state.as_ref().unwrap());
@@ -362,8 +363,8 @@ impl Client {
   fn submit_move(&mut self) {
     if let Some(match_state) = &mut self.match_state {
         // TODO represent "viewing the play state" in a more ergonomic way
-      if match_state.display_move_idx == match_state.history.moves().len() + 1 {
-        if let Some(m) = match_state.play_state.finalise_move() {
+      if match_state.display_move_idx == match_state.history.moves().len() {
+        if let Some(m) = match_state.game_state.finalise_move() {
           self.send_message(&ClientMessage::Move(m)); // TODO copied from send_move, consolidate
         }
       }
@@ -413,7 +414,7 @@ impl Client {
 
   fn adjust_board_width(&self) {
     if let Some(match_state) = self.match_state.as_ref() {
-      Display::adjust_board_width(match_state.play_state.board().size())
+      Display::adjust_board_width(match_state.game_state.board().size())
     }
   }
 }
@@ -448,11 +449,7 @@ impl Display {
 
         // TODO this logic should live somewhere else, and this function should just take a move list + a game state to display
         // TODO represent "viewing the play state" in a more ergonomic way
-      let game = if match_state.display_move_idx == match_state.history.moves().len() + 1 { // TODO consider making history.state() return an option to make this easier
-        match_state.play_state.clone() // TODO consider storing the "game to display" in one location no matter whether it's a history one or the play state. avoids this clone, but keeps the memory allocated all the time
-      } else {
-        match_state.history.state(match_state.display_move_idx)
-      };
+      let game = &match_state.game_state;
 
       let board_size = game.board().size().get();
 
@@ -653,7 +650,7 @@ impl Display {
         // That element is useful both to signify who's turn it is, and for the player to click on
         // if it is their turn to get back to their in-progress turn after looking at past game states
       let moves = match_state.history.moves();
-      for move_idx in 0..=moves.len() { 
+      for move_idx in 0..moves.len() {
         if move_idx % 2 == 0 {
           let turn_number: HtmlElement = document.create_element("span")?.dyn_into()?;
           turn_number.class_list().add_1("turn-number")?;
