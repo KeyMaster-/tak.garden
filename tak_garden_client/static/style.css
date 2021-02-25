@@ -78,10 +78,11 @@ div {
    table element.*/
 .history {
   height: 100%; /* Force the list to fit the height of the wrapper even if the list is longer than the wrapper's height */
+  overflow-x: hidden;
   overflow-y: auto;
 
   display: grid;
-  grid-template-columns: 3ch repeat(2, minmax(4ch, 1fr));
+  grid-template-columns: 3ch repeat(2, 10ch);
   grid-auto-rows: max-content;
 
   /* Gutters */
@@ -93,7 +94,7 @@ div {
 
 .history span {
   color: #f9f9f9;
-  scroll-snap-align: start;
+  scroll-snap-align: end; /* Snap the bottom of a move row to the bottom of the scroll container, since most often we want to scroll down to the latest move. */
 }
 
 .turn-number {
@@ -106,6 +107,8 @@ div {
   padding-right: 1ch;
 
   border-radius: 0.2em;
+
+  overflow: hidden;
 }
 
 .move-text.active {
