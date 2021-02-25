@@ -36,11 +36,11 @@ div {
 }
 
 .board-wrapper {
-  width: min-content;
+  width: max-content;
   font-size: 20px; /* this lives here so that ch and em reference the correct font size */
 
   display: grid;
-  grid-template-columns: 20ch 2ch 1fr 3.5ch;
+  grid-template-columns: max-content 2ch 1fr 3.5ch;
   grid-template-rows: 1fr auto auto;
   grid-template-areas: 
     "history ranks board control-display"
@@ -81,7 +81,7 @@ div {
   overflow-y: auto;
 
   display: grid;
-  grid-template-columns: 2ch 1fr 1fr;
+  grid-template-columns: 3ch repeat(2, minmax(4ch, 1fr));
   grid-auto-rows: max-content;
 
   /* Gutters */
@@ -103,6 +103,7 @@ div {
 .move-text {
   text-align: left;
   padding-left: 1ch;
+  padding-right: 1ch;
 
   border-radius: 0.2em;
 }
