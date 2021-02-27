@@ -333,6 +333,7 @@ impl Client {
       Ok(())
     };
 
+    let mut did_update = false;
     if let Some(match_state) = &mut self.match_state {
         // TODO represent "viewing the play state" in a more ergonomic way
       if match_state.display_move_idx == match_state.history.moves().len() {
@@ -341,14 +342,18 @@ impl Client {
           if game_state.active_color() == controlled_color {
             handle_click(game_state, click_loc)
               .unwrap_or_else(|e| console_log!("Client::on_click attempted an invalid action: {}", e));
+
+            did_update = true;
           }
         }
       }
     } else {
       console_log!("Client::on_click called with no game present!");
-    }
+    };
 
-    self.display.as_mut().unwrap().update(self.match_state.as_ref().unwrap());
+    if did_update {
+      self.display.as_mut().unwrap().update(self.match_state.as_ref().unwrap());
+    }
   }
 
   fn on_history_click(&mut self, move_idx: usize) {
