@@ -6,7 +6,7 @@ use web_sys::{Element, HtmlElement, Window};
 use tak_garden_common::{ServerMessage, ClientMessage};
 use rustak::{
   MoveHistory, Game, GameState, MoveState, MoveAction, WinKind, 
-  BoardSize, Location, Color, 
+  BoardSize, Location, Direction, Color,
   StoneKind, StoneStack,
   ActionInvalidReason, PlacementInvalidReason, MovementInvalidReason,
   file_idx_to_char,
@@ -451,11 +451,7 @@ impl Display {
   fn update(&mut self, match_state: &MatchState) {
       // TODO be consistent about error handling in here - some stuff is `expect`ed, some is handled with the ? operator
     (|| -> Result<(), JsValue> {
-
-        // TODO this logic should live somewhere else, and this function should just take a move list + a game state to display
-        // TODO represent "viewing the play state" in a more ergonomic way
       let game = &match_state.game_state;
-
       let board_size = game.board().size().get();
 
       let window = web_sys::window().expect("Couldn't get window");
@@ -474,7 +470,9 @@ impl Display {
       let spaces = document.get_element_by_id("spaces").expect("Couldn't get spaces div");
       clear_children(&spaces)?;
 
-      for row in 0..board_size {
+      const HEADINGS: [&str; 4] = ["north", "east", "south", "west"];
+      let mut space_els = vec![];
+      for row in (0..board_size).rev() {
         for col in 0..board_size {
           let color_class = if (col + (row % 2)) % 2 == 0 {
             "dark"
@@ -485,17 +483,58 @@ impl Display {
           let space: HtmlElement = document.create_element("div")?.dyn_into()?;
           space.class_list().add_2("space", color_class)?;
 
+          for heading in &HEADINGS {
+            let bridge: HtmlElement = document.create_element("div")?.dyn_into()?;
+            bridge.class_list().add_2("bridge", heading)?;
+            space.append_child(&bridge)?;
+          }
+
             // TODO it's unnecessary to re-create a callback each time we get new board state
             // Profile if this creates substantial memory churn, and if so change it to cache them and only re-create
             // if the board size changes. (Having a specific phase for that would allow us to get rid of various repeated work anyway)
           let client_ref = self.client_ref.clone();
           let callback = Closure::wrap(Box::new(move || { // TODO prevent default on e: MouseEvent (from web-sys)
-            client_ref.borrow_mut().on_click(Location::from_coords(col, (board_size - 1) - row).unwrap());
+            client_ref.borrow_mut().on_click(Location::from_coords(col, row).unwrap());
           }) as Box<dyn Fn()>);
 
           space.set_onclick(Some(callback.as_ref().unchecked_ref())); // as_ref().unchecked_ref() gets &Function from Closure
           self.click_closures.push(callback);
           spaces.append_child(&space)?;
+
+          space_els.push((space, Location::from_coords(col, row).unwrap()));
+        }
+      }
+
+        // add control and bridge classes to space elements for showing bridges
+      for (space, loc) in space_els {
+        if let Some(ctrl_color) = game.board().road_control_at(loc) {
+          let ctrl_class = match ctrl_color {
+            Color::White => "ctrl-light",
+            Color::Black => "ctrl-dark",
+          };
+          space.class_list().add_1(ctrl_class)?;
+
+          let dir_to_heading = |dir| {
+            use Direction::*;
+            HEADINGS[match dir { Up => 0, Right => 1, Down => 2, Left => 3 }]
+          };
+
+          let neighbours_with_heading = loc.neighbours_with_direction(game.board().size())
+            .into_iter().map(|(loc, dir)| (loc, dir_to_heading(dir)));
+
+            // add connections between neighbours
+          for (neighbour_loc, heading) in neighbours_with_heading {
+            if let Some(neighbour_ctrl_color) = game.board().road_control_at(neighbour_loc) {
+              if neighbour_ctrl_color == ctrl_color {
+                space.class_list().add_1(heading)?;
+              }
+            }
+          }
+
+            // add connections to the edge of the board
+          for touched_heading in loc.touching_sides(game.board().size()).dirs().into_iter().map(dir_to_heading) {
+            space.class_list().add_1(touched_heading)?;
+          }
         }
       }
 

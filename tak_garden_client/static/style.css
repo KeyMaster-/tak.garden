@@ -220,11 +220,80 @@ div {
   display: grid;
 }
 
+.space {
+  position: relative;
+}
+
 .space.dark {
   background-color: #aaaaaa;
 }
 .space.light {
   background-color: #bbbbbb;
+}
+
+.bridge {
+  position: absolute;
+}
+/* TODO make width/length of bridges central variables, calc left/top offset based on width var */
+.bridge.north, .bridge.south {
+  width: 25%;
+  height: 50%;
+
+  left: 37.5%;
+}
+
+.bridge.north {
+  top: 0;
+}
+
+.bridge.south {
+  bottom: 0;
+}
+
+.bridge.west, .bridge.east {
+  height: 25%;
+  width: 50%;
+
+  top: 37.5%;
+}
+
+.bridge.west {
+  left: 0;
+}
+
+.bridge.east {
+  right: 0;
+}
+
+/* A space is only ever controlled by white OR black, not both, so we can colour all bridges according to the controlling color. */
+.space.ctrl-light .bridge {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.space.ctrl-dark .bridge {
+  background-color: rgba(0, 0, 0, 0.2);
+}
+
+/* Hide all bridges by default */
+.bridge {
+  display: none;
+}
+
+/* Selectively display bridges again based on connectivity */
+.space.north .bridge.north {
+  display: block;
+}
+
+.space.south .bridge.south {
+  display: block;
+}
+
+.space.west .bridge.west {
+  display: block;
+}
+
+.space.east .bridge.east {
+  display: block;
 }
 
 .stones {
