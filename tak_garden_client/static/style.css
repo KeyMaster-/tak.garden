@@ -267,11 +267,11 @@ div {
 
 /* A space is only ever controlled by white OR black, not both, so we can colour all bridges according to the controlling color. */
 .space.ctrl-light .bridge {
-  background-color: rgba(255, 255, 255, 0.2);
+  background-color: rgba(255, 255, 255, 0.18);
 }
 
 .space.ctrl-dark .bridge {
-  background-color: rgba(0, 0, 0, 0.2);
+  background-color: rgba(0, 0, 0, 0.1);
 }
 
 /* Hide all bridges by default */
