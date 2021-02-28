@@ -9,7 +9,9 @@ class Connection {
   }
 
   open() {
-    const uri = 'wss://' + location.host + '/ws';
+      // pathname should be /<game id>
+      // TODO add verification? or do we just let the server handle that?
+    const uri = 'wss://' + location.host + '/ws' + window.location.pathname;
     this.ws = new WebSocket(uri);
 
     this.ws.onopen = () => {

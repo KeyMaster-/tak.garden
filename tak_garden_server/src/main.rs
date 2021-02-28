@@ -3,14 +3,17 @@ use std::sync::{
   atomic::{AtomicUsize, Ordering},
   Arc
 };
+// use std::str::FromStr;
 use tokio::sync::{mpsc, RwLock};
 
 use futures::{FutureExt, StreamExt};
 use warp::ws::{WebSocket, Message};
-use warp::Filter;
+use warp::{Filter, Reply, http::Uri};
 
 use rustak::{BoardSize, Color, Move, MoveHistory};
 use tak_garden_common::{ServerMessage, ClientMessage};
+
+use harsh::{Harsh, HarshBuilder};
 
 const NO_CONNECTION_ID: usize = 0;
 static NEXT_CONNECTION_ID: AtomicUsize = AtomicUsize::new(NO_CONNECTION_ID + 1);
@@ -22,9 +25,24 @@ type ConnectionSender = mpsc::UnboundedSender<Result<Message, warp::Error>>;
 type Connections = Arc<RwLock<HashMap<usize, ConnectionSender>>>;
 type ControllerIDs = Arc<(AtomicUsize, AtomicUsize)>;
 
+// #[derive(Debug)]
+// struct GameId(String);
+
+// TODO consider using the FromStr + a lazy static to get at the hasher, instead of doing and_then filter backflips
+// impl FromStr for GameId {
+//   type Err = ();
+
+//   fn from_str(s: &str) -> Result<Self, Self::Err> {
+//     if s == "abcdef" {
+//       Ok(Self(s.to_string()))
+//     } else {
+//       Err(())
+//     }
+//   }
+// }
+
 #[tokio::main]
 async fn main() {
-
   let match_state = Arc::new(RwLock::new(MoveHistory::new(BoardSize::new(5).unwrap())));
     // make a filter that provides a reference to our game state
   let match_state = warp::any().map(move || match_state.clone());
@@ -35,19 +53,81 @@ async fn main() {
   let controller_ids = Arc::new((AtomicUsize::new(NO_CONNECTION_ID), AtomicUsize::new(NO_CONNECTION_ID)));
   let controller_ids = warp::any().map(move || controller_ids.clone());
 
-  let echo = warp::path("ws")
+  let hasher = Arc::new(HarshBuilder::new().salt("tak.garden").length(6).build().expect("Couldn't construct a hasher."));
+
+  let next_game_id = Arc::new(RwLock::new(1_u64));
+  let next_game_id = warp::any().map(move || next_game_id.clone());
+
+  let ws_connect = warp::path("ws")
     .and(warp::ws())
+    .and(game_hash_to_id(hasher.clone()))
     .and(match_state)
     .and(connections)
     .and(controller_ids)
-    .map(|ws: warp::ws::Ws, match_state, connections, controller_ids| {
+    .map(|ws: warp::ws::Ws, game_id, match_state, connections, controller_ids| {
       ws.on_upgrade(move |socket| on_connected(socket, match_state, connections, controller_ids))
     });
 
   let static_files = warp::fs::dir("dist");
 
-  warp::serve(static_files.or(echo))
+  let hasher2 = hasher.clone();
+  let root = warp::path::end()
+    .and(next_game_id) // TODO this and the hasher can be combined into a single "generate next id hash" function to pass in
+    .and(warp::any().map(move || hasher2.clone()))
+    .and_then(|next_game_id: Arc<RwLock<u64>>, hasher: Arc<Harsh>| async move {
+      let game_id = {
+        let mut next_id = next_game_id.write().await;
+        let game_id = *next_id;
+        *next_id += 1;
+
+        game_id
+      };
+
+      let game_hash = hasher.encode(&[game_id]);
+      let uri: Uri = format!("/{}", game_hash).parse().expect("/<game id> wasn't a valid uri");
+
+        // The async block needs to know its full type, and since we never return the Err variant, it doesn't know it's error type
+        // There's no easy way to annotate the type of the async block itself, so instead we're being explicit about the full type that this Ok comes from here,
+        // which gives type inference all the info it needs.
+      Ok::<Uri, warp::reject::Rejection>(uri)
+    })
+    .map(|uri| {
+      warp::redirect::temporary(uri)
+    });
+
+    // TODO understand the logic of the file filter.
+    // The intent of this is to match the game id, then serve index.html anyway, and somehow tell the client what game ID to connect to via WS\
+    // Maybe the game id should be part of the ws path? would mean conn reset on game change
+  let game = game_hash_to_id(hasher.clone())
+    .and(warp::fs::file("dist/index.html"))
+    .map(|_, reply: warp::filters::fs::File| {
+      reply.into_response()
+    });
+
+    // if at /, reroute to /<game id>, if at /<game id>, serve index.html
+    // then also serve static files and ws connection
+    // execute filters in order of specificity (not sure if this matters)
+    // TODO either the whole chain should send a nice error response if none match, or the game filter does that
+  warp::serve(root.or(game).or(ws_connect).or(static_files))
     .run(([127, 0, 0, 1], 3030)).await;
+}
+
+fn game_hash_to_id(hasher: Arc<Harsh>) -> impl Filter<Extract = (u64,), Error = warp::reject::Rejection> + Clone {
+  warp::path::param()
+    .and(warp::any().map(move || hasher.clone())) // This is the only way I found to provide a clone'd resource to this while keeping the and_then closure Fn and the overall result Clone
+    .and_then(move |game_hash: String, hasher: Arc<Harsh>| async move {
+        // TODO make this more robust, any ID that _could_ have hashed to a valid integer would be passed through here
+        // should also check against the games we actually have in memory (/ in the db)
+      if let Ok(id_vec) = hasher.decode(game_hash) {
+        if id_vec.len() == 1 {
+          Ok(id_vec[0])
+        } else {
+          Err(warp::reject::not_found())
+        }
+      } else {
+        Err(warp::reject::not_found())
+      }
+    })
 }
 
 async fn on_connected(ws: WebSocket, match_state: MatchState, connections: Connections, controller_ids: ControllerIDs) {
