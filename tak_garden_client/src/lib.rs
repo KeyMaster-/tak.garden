@@ -66,6 +66,9 @@ impl ClientInterface {
 
 #[wasm_bindgen]
 impl ClientInterface {
+  pub fn on_connected(&self) {
+    self.0.borrow().on_connected();
+  }
   pub fn on_message(&self, msg: &[u8]) {
     self.0.borrow_mut().on_message(msg);
   }
@@ -117,6 +120,23 @@ impl Client {
     self.display = Some(display);
   }
 
+  fn on_connected(&self) {
+    let window = web_sys::window().expect("Couldn't get window");
+    let pathname = window.location().pathname().expect("No pathname available");
+    let match_id = {
+      let path_suffix = &pathname[1..];
+      if path_suffix.len() == 0 {
+        None
+      } else {
+        Some(path_suffix.to_string())
+      }
+    };
+
+    console_log!("Game id: {:?}", match_id);
+    let msg = ClientMessage::JoinMatch(match_id);
+    self.send_message(&msg);
+  }
+
   fn on_message(&mut self, msg: &[u8]) {
     let msg: Result<ServerMessage, _> = serde_cbor::from_slice(msg);
     if let Err(e) = &msg {
@@ -147,7 +167,15 @@ impl Client {
           // TODO consolidate callsites for this logic. See above.
           self.adjust_board_width();
         },
-        ServerMessage::GameState(moves, size) => {
+        ServerMessage::GameState(match_id_hash, moves, size) => {
+          let window = web_sys::window().expect("Couldn't get window");
+          let pathname = window.location().pathname().expect("Couldn't get pathname");
+          if pathname[1..] != match_id_hash {
+            let history = window.history().expect("Couldn't get history");
+            history.replace_state_with_url(&JsValue::NULL, "", Some(&match_id_hash)).expect("Couldn't replace history state");
+          }
+          // window.location().set_pathname(&match_id_hash).expect("Couldn't set pathname to match id hash.");
+
             // TODO error handling instead of panic?
           let history = MoveHistory::from_moves(moves, size).unwrap_or_else(|e| panic!("Move list sent by server was invalid: Move {}, Reason {}", e.0, e.1));
           let display_move_idx = history.moves().len();

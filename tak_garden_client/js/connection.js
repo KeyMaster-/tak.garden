@@ -11,11 +11,13 @@ class Connection {
   open() {
       // pathname should be /<game id>
       // TODO add verification? or do we just let the server handle that?
-    const uri = 'wss://' + location.host + '/ws' + window.location.pathname;
+      //  + window.location.pathname
+    const uri = 'wss://' + location.host + '/ws';
     this.ws = new WebSocket(uri);
 
     this.ws.onopen = () => {
       this.display.is_connected = true;
+      this.client.on_connected();
     };
 
     this.ws.onclose = () => {
