@@ -11,5 +11,6 @@ pub enum ServerMessage {
 pub enum ClientMessage {
   Move(Move),
   ResetGame(BoardSize),
-  UndoMove
+  UndoMove,
+  SwapPlayers
 }

@@ -392,6 +392,8 @@ impl Client {
         }
       } else if ctrl_text == "undo" {
         self.send_message(&ClientMessage::UndoMove);
+      } else if ctrl_text == "swap" {
+        self.send_message(&ClientMessage::SwapPlayers);
       }
     } else {
       self.send_move(msg);

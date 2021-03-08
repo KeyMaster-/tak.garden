@@ -126,6 +126,17 @@ async fn on_connected(ws: WebSocket, match_state: MatchState, connections: Conne
           history.undo();
         }
         broadcast_match_state(&match_state, &connections).await;
+      },
+      ClientMessage::SwapPlayers => {
+        let prev_controller_ids = (controller_ids.0.load(Ordering::Relaxed), controller_ids.1.load(Ordering::Relaxed));
+        controller_ids.0.compare_exchange(prev_controller_ids.0, prev_controller_ids.1, Ordering::Relaxed, Ordering::Relaxed)
+          .err().map(|current| if current == prev_controller_ids.0 { println!("Failed to swap on white player.");});
+        controller_ids.1.compare_exchange(prev_controller_ids.1, prev_controller_ids.0, Ordering::Relaxed, Ordering::Relaxed)
+          .err().map(|current| if current == prev_controller_ids.1 { println!("Failed to swap on white player.");});
+
+        let connections = connections.read().await;
+        send_msg(&connections[&prev_controller_ids.0], &ServerMessage::Control(Some(Color::Black)));
+        send_msg(&connections[&prev_controller_ids.1], &ServerMessage::Control(Some(Color::White)));
       }
     }
   }
