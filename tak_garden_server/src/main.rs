@@ -10,7 +10,7 @@ use warp::ws::{WebSocket, Message};
 use warp::{Filter, Reply};
 
 use rustak::{BoardSize, Color, Move, MoveHistory};
-use tak_garden_common::{ServerMessage, ClientMessage};
+use tak_garden_common::{ServerMessage, ClientMessage, MatchControl};
 
 use harsh::{Harsh, HarshBuilder};
 
@@ -21,7 +21,6 @@ const NO_CONNECTION_ID: ConnectionID = 0;
   // Needs to be a result due to the unbounded sender -> websocket forwarding
   // Unsure what exactly the reasoning is.
 type ConnectionSender = mpsc::UnboundedSender<Result<Message, warp::Error>>;
-type ConnectionsRef = Arc<RwLock<HashMap<ConnectionID, ConnectionSender>>>;
 
 type MatchID = u64;
 
@@ -30,7 +29,7 @@ type MatchID = u64;
 struct Match {
   id_hash: String, // TODO think more about the hash <-> id dance and where to best store this
   history: MoveHistory,
-  controllers: (ConnectionID, ConnectionID),
+  controllers: MatchControllers,
   connections: HashMap<ConnectionID, ConnectionSender>,
 }
 
@@ -39,37 +38,31 @@ impl Match {
     Self {
       id_hash,
       history: MoveHistory::new(size),
-      controllers: (NO_CONNECTION_ID, NO_CONNECTION_ID),
+      controllers: Default::default(),
       connections: HashMap::new(),
     }
   }
 
-    // Adds the connection to the match. Returns what color this connection controls, if any
-  fn add_connection(&mut self, id: ConnectionID, sender: ConnectionSender) -> Option<Color> {
+  fn add_connection(&mut self, id: ConnectionID, sender: ConnectionSender) {
     self.connections.insert(id, sender);
-
-    if self.controllers.0 == NO_CONNECTION_ID {
-      self.controllers.0 = id;
-      Some(Color::White)
-    } else if self.controllers.1 == NO_CONNECTION_ID {
-      self.controllers.1 = id;
-      Some(Color::Black)
-    } else {
-      None
+    if self.controllers.add(id) {
+      self.broadcast_control();
     }
   }
 
   fn remove_connection(&mut self, id: ConnectionID) {
     self.connections.remove(&id);
-    if self.controllers.0 == id {
-      self.controllers.0 = NO_CONNECTION_ID;
-    } else if self.controllers.1 == id {
-      self.controllers.1 = NO_CONNECTION_ID;
+    if self.controllers.remove(id) {
+      self.broadcast_control();
     }
   }
 
-  fn id_hash(&self) -> &str {
-    &self.id_hash
+  fn broadcast_control(&self) {
+    for &conn_id in &self.controllers {
+      let sender = &self.connections[&conn_id];
+      let msg = ServerMessage::Control(self.controllers.control_for(conn_id));
+      send_msg(&sender, &msg);
+    }
   }
 
   fn history(&self) -> &MoveHistory {
@@ -78,6 +71,95 @@ impl Match {
 
   fn history_mut(&mut self) -> &mut MoveHistory {
     &mut self.history
+  }
+
+  fn controllers(&self) -> &MatchControllers {
+    &self.controllers
+  }
+
+  fn state_message(&self) -> ServerMessage {
+    ServerMessage::GameState(self.id_hash.clone(), self.history.moves().to_vec(), self.history.size())
+  }
+
+  fn send_to(&self, sender: &ConnectionSender) {
+    send_msg(sender, &self.state_message());
+  }
+
+  fn broadcast_state(&self) {
+    let msg = self.state_message();
+
+    for tx in self.connections.values() {
+      send_msg(tx, &msg);
+    }
+  }
+}
+
+#[derive(Debug)]
+struct MatchControllers([ConnectionID; 2]);
+
+impl MatchControllers {
+  // If we have no controlling connections, our internal array is NO_CONNECTION_ID twice.
+  // If we have only one controller, our internal array will contain their connection ID at index 0,
+  // and NO_CONNECTION_ID at index 1. This indicates that this single connection controls both colors.
+  // Else, the ids at 0 and 1 are different.
+  fn add(&mut self, id: ConnectionID) -> bool {
+    if self.0[0] == NO_CONNECTION_ID {
+      self.0[0] = id;
+      true
+    } else if self.0[1] == NO_CONNECTION_ID {
+      self.0[1] = id;
+      true
+    } else {
+      false
+    }
+  }
+
+  fn remove(&mut self, id: ConnectionID) -> bool {
+    if self.0[0] == id {
+      // If we had two controllers, moves the other to index 0, since a single controller is always stored at index 0.
+      // If we were the only controller, this turns the array back into two NO_CONTROLLER_IDs
+      self.0[0] = self.0[1];
+      self.0[1] = NO_CONNECTION_ID;
+      true
+    } else if self.0[1] == id {
+      self.0[1] = NO_CONNECTION_ID;
+      true
+    } else {
+      false
+    }
+  }
+
+  fn control_for(&self, id: ConnectionID) -> MatchControl {
+    if id == self.0[0] && self.0[1] == NO_CONNECTION_ID {
+      MatchControl::Both
+    } else if id == self.0[0] {
+      MatchControl::Single(Color::White)
+    } else if id == self.0[1] {
+      MatchControl::Single(Color::Black)
+    } else {
+      MatchControl::None
+    }
+  }
+}
+
+impl Default for MatchControllers {
+  fn default() -> Self {
+    Self([NO_CONNECTION_ID, NO_CONNECTION_ID])
+  }
+}
+
+impl<'a> IntoIterator for &'a MatchControllers {
+  type Item = &'a ConnectionID;
+  type IntoIter = std::slice::Iter<'a, ConnectionID>;
+
+  fn into_iter(self) -> Self::IntoIter {
+    if self.0[0] == NO_CONNECTION_ID {
+      self.0[0..0].iter()
+    } else if self.0[1] == NO_CONNECTION_ID {
+      self.0[0..1].iter()
+    } else {
+      self.0.iter()
+    }
   }
 }
 
@@ -121,7 +203,7 @@ impl Matches {
     self.next_id += 1;
     let id_hash = self.hasher.encode(out_id);
     println!("Generating new game {},{}", out_id, id_hash);
-    
+
     let match_ref = Arc::new(RwLock::new(Match::new(id_hash, BoardSize::new(5).unwrap())));
     self.matches.insert(out_id, match_ref.clone());
     match_ref
@@ -141,20 +223,19 @@ type MatchesRef = Arc<RwLock<Matches>>;
 async fn main() {
     // TODO next connection id generation and the map can be combined into a single struct
   let next_connection_id = Arc::new(RwLock::new(NO_CONNECTION_ID + 1));
-  let connections = ConnectionsRef::default();
 
   let matches = Arc::new(RwLock::new(Matches::new()));
 
   // Create warp filters that supply cloned refs to each of our global data structures on each ws connection
   let data = {
     let matches = matches.clone();
-    warp::any().map(move || (next_connection_id.clone(), connections.clone(), matches.clone()))
+    warp::any().map(move || (next_connection_id.clone(), matches.clone()))
   };
 
   let ws_connect = warp::path!("ws")
     .and(warp::ws()).and(data)
-    .map(|ws: warp::ws::Ws, (next_connection_id, connections, matches)| {
-      ws.on_upgrade(move |socket| on_connected(socket, next_connection_id, connections, matches))
+    .map(|ws: warp::ws::Ws, (next_connection_id, matches)| {
+      ws.on_upgrade(move |socket| on_connected(socket, next_connection_id, matches))
     });
 
   let static_files = warp::fs::dir("dist");
@@ -166,9 +247,10 @@ async fn main() {
       reply.into_response()
     });
 
-    // if at / or /game_id, serve index. Otherwise, serve websocket at /ws and static files at their specific paths (/filename.ext)
+    // First, check if we're serving a well-known address (static files, or websocket at /ws). If so, serve that,
+    // else, serve the game page (index.html) at / or /<match_id_hash>
     // TODO either the whole chain should send a nice error response if none match, or the game filter does that
-  warp::serve(game.or(ws_connect).or(static_files))
+  warp::serve(static_files.or(ws_connect).or(game))
     .run(([127, 0, 0, 1], 3030)).await;
 }
 
@@ -177,11 +259,10 @@ fn match_id_hash(matches: Arc<RwLock<Matches>>) -> impl Filter<Extract = (MatchR
     .and(warp::any().map(move || matches.clone())) // This is the only way I found to provide a clone'd resource to this while keeping the and_then closure Fn and the overall result Clone
     .and_then(move |id_hash: String, matches: Arc<RwLock<Matches>>| async move {
       matches.read().await.get(&id_hash).ok_or(warp::reject::not_found())
-      // decode_match_id_hash(&game_hash, &hasher).ok_or(warp::reject::not_found())
     })
 }
 
-async fn on_connected(ws: WebSocket, next_connection_id: Arc<RwLock<ConnectionID>>, connections: ConnectionsRef, matches: MatchesRef) {
+async fn on_connected(ws: WebSocket, next_connection_id: Arc<RwLock<ConnectionID>>, matches: MatchesRef) {
     // Since mpsc senders don't implement Eq, we need an id to associate with each
     // connection to be able to store and later remove them in a collection
 
@@ -204,8 +285,6 @@ async fn on_connected(ws: WebSocket, next_connection_id: Arc<RwLock<ConnectionID
       eprintln!("WebSocket send error: {}", e);
     }
   }));
-
-  connections.write().await.insert(conn_id, tx.clone());
 
     // ID of the match this connection is in
   let mut match_ref: Option<MatchRef> = None;
@@ -248,22 +327,20 @@ async fn on_connected(ws: WebSocket, next_connection_id: Arc<RwLock<ConnectionID
       ClientMessage::ResetGame(size) => {
         if let Some(ref match_ref) = match_ref {
           *match_ref.write().await.history_mut() = MoveHistory::new(size);
-          broadcast_match_state(&match_ref).await;
+          match_ref.read().await.broadcast_state();
         }
-        // *match_state.write().await = MoveHistory::new(size);
-        // broadcast_match_state(&match_state, &connections).await;
       },
       ClientMessage::UndoMove => {
         if let Some(ref match_ref) = match_ref {
           println!("Undoing last move");
           match_ref.write().await.history_mut().undo();
-          broadcast_match_state(&match_ref).await;
+          match_ref.read().await.broadcast_state();
         }
       }
     }
   }
 
-  on_disconnected(match_ref, conn_id, &connections).await;
+  on_disconnected(match_ref, conn_id).await;
 }
 
 // if match_id is Some, the provided MatchID is assumed to already exist.
@@ -276,14 +353,8 @@ async fn join_match<T>(match_id_hash: Option<T>, conn_id: ConnectionID, sender: 
     matches.write().await.new_match()
   };
 
-  let controlled_color = match_ref.write().await.add_connection(conn_id, sender.clone());
-
-  {
-    let m = match_ref.read().await;
-    send_match_state(&sender, m.id_hash(), m.history());
-  }
-  send_msg(sender, &ServerMessage::Control(controlled_color));
-
+  match_ref.write().await.add_connection(conn_id, sender.clone());
+  match_ref.read().await.send_to(sender);
   match_ref
 }
 
@@ -303,10 +374,12 @@ async fn on_move(m: Move, match_state: &MatchRef, conn_id: ConnectionID, sender:
     let ref mut match_state = *match_state.write().await;
     let current_state = match_state.history().last();
 
-    let is_active_player = match current_state.active_color() {
-      Color::White => conn_id == match_state.controllers.0,
-      Color::Black => conn_id == match_state.controllers.1,
-    };
+    let is_active_player = match_state.controllers().control_for(conn_id).controls(current_state.active_color());
+
+    // let is_active_player = match current_state.active_color() {
+    //   Color::White => conn_id == match_state.controllers.0,
+    //   Color::Black => conn_id == match_state.controllers.1,
+    // };
 
     if is_active_player {
       println!("Move: {}, {}", current_state.active_color(), m);
@@ -320,25 +393,11 @@ async fn on_move(m: Move, match_state: &MatchRef, conn_id: ConnectionID, sender:
     if let Err(reason) = move_res {
       send_msg(&sender, &ServerMessage::ActionInvalid(format!("{}", reason)));
     } else {
-      broadcast_match_state(match_state).await;
+      match_state.read().await.broadcast_state();
+      // broadcast_match_state(match_state).await;
     }
   } else {
     send_msg(&sender, &ServerMessage::ActionInvalid("It's not your turn.".to_string()));
-  }
-}
-
-fn send_match_state(tx: &ConnectionSender, match_hash: &str, history: &MoveHistory) {
-  let msg = ServerMessage::GameState(match_hash.to_string(), history.moves().to_vec(), history.size());
-  send_msg(tx, &msg);
-}
-
-async fn broadcast_match_state(match_state: &MatchRef) {
-  let match_state = match_state.read().await;
-  let history = match_state.history();
-  let msg = ServerMessage::GameState(match_state.id_hash().to_string(), history.moves().to_vec(), history.size());
-
-  for tx in match_state.connections.values() {
-    send_msg(tx, &msg);
   }
 }
 
@@ -354,9 +413,8 @@ fn send_msg(tx: &ConnectionSender, msg: &ServerMessage) {
   };
 }
 
-async fn on_disconnected(match_ref: Option<MatchRef>, conn_id: ConnectionID, connections: &ConnectionsRef) {
+async fn on_disconnected(match_ref: Option<MatchRef>, conn_id: ConnectionID) {
   if let Some(match_ref) = match_ref {
     match_ref.write().await.remove_connection(conn_id);
   }
-  connections.write().await.remove(&conn_id);
 }
