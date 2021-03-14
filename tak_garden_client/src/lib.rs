@@ -3,7 +3,7 @@ mod utils;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{Element, HtmlElement, Window};
-use tak_garden_common::{ServerMessage, ClientMessage};
+use tak_garden_common::{ServerMessage, ClientMessage, MatchControl};
 use rustak::{
   MoveHistory, Game, GameState, MoveState, MoveAction, WinKind, 
   BoardSize, Location, Direction, Color,
@@ -66,6 +66,9 @@ impl ClientInterface {
 
 #[wasm_bindgen]
 impl ClientInterface {
+  pub fn on_connected(&self) {
+    self.0.borrow().on_connected();
+  }
   pub fn on_message(&self, msg: &[u8]) {
     self.0.borrow_mut().on_message(msg);
   }
@@ -94,7 +97,7 @@ struct MatchState {
 struct Client {
   connection: Connection,
   match_state: Option<MatchState>,
-  controlled_color: Option<Color>,
+  control: MatchControl,
   display: Option<Display>, // Is only None before Client is fully initialised. TODO replace with LateInit from once_cell (given in docs)
 }
 
@@ -108,13 +111,30 @@ impl Client {
     Self {
       connection,
       match_state: None,
-      controlled_color: None,
+      control: MatchControl::None,
       display: None
     }
   }
 
   fn set_display(&mut self, display: Display) {
     self.display = Some(display);
+  }
+
+  fn on_connected(&self) {
+    let window = web_sys::window().expect("Couldn't get window");
+    let pathname = window.location().pathname().expect("No pathname available");
+    let match_id = {
+      let path_suffix = &pathname[1..];
+      if path_suffix.len() == 0 {
+        None
+      } else {
+        Some(path_suffix.to_string())
+      }
+    };
+
+    console_log!("Game id: {:?}", match_id);
+    let msg = ClientMessage::JoinMatch(match_id);
+    self.send_message(&msg);
   }
 
   fn on_message(&mut self, msg: &[u8]) {
@@ -126,13 +146,13 @@ impl Client {
     let msg = msg.unwrap();
     let mut process_message = |msg| -> Result<(), JsValue> {
       match msg {
-        ServerMessage::Control(color_opt) => {
-          self.controlled_color = color_opt;
+        ServerMessage::Control(control) => {
+          self.control = control;
 
           let window = web_sys::window().expect("Couldn't get window");
           let document = window.document().expect("Couldn't get document");
           let player_status: HtmlElement = document.get_element_by_id("player_status").expect("Couldn't find 'player_status' element").dyn_into()?;
-          player_status.set_inner_text(&control_message(color_opt));
+          player_status.set_inner_text(&control_message(control));
 
           // TODO consolidate callsites for this logic.
           // This is here because we might not have had text in the output before, in which case this changes the available height for the board
@@ -147,7 +167,15 @@ impl Client {
           // TODO consolidate callsites for this logic. See above.
           self.adjust_board_width();
         },
-        ServerMessage::GameState(moves, size) => {
+        ServerMessage::GameState(match_id_hash, moves, size) => {
+          let window = web_sys::window().expect("Couldn't get window");
+          let pathname = window.location().pathname().expect("Couldn't get pathname");
+          if pathname[1..] != match_id_hash {
+            let history = window.history().expect("Couldn't get history");
+            history.replace_state_with_url(&JsValue::NULL, "", Some(&match_id_hash)).expect("Couldn't replace history state");
+          }
+          // window.location().set_pathname(&match_id_hash).expect("Couldn't set pathname to match id hash.");
+
             // TODO error handling instead of panic?
           let history = MoveHistory::from_moves(moves, size).unwrap_or_else(|e| panic!("Move list sent by server was invalid: Move {}, Reason {}", e.0, e.1));
           let display_move_idx = history.moves().len();
@@ -337,14 +365,12 @@ impl Client {
     if let Some(match_state) = &mut self.match_state {
         // TODO represent "viewing the play state" in a more ergonomic way
       if match_state.display_move_idx == match_state.history.moves().len() {
-        if let Some(controlled_color) = self.controlled_color {
-          let game_state = &mut match_state.game_state;
-          if game_state.active_color() == controlled_color {
-            handle_click(game_state, click_loc)
-              .unwrap_or_else(|e| console_log!("Client::on_click attempted an invalid action: {}", e));
+        let game_state = &mut match_state.game_state;
+        if self.control.controls(game_state.active_color()) {
+          handle_click(game_state, click_loc)
+            .unwrap_or_else(|e| console_log!("Client::on_click attempted an invalid action: {}", e));
 
-            did_update = true;
-          }
+          did_update = true;
         }
       }
     } else {
@@ -426,12 +452,13 @@ impl Client {
   }
 }
 
-fn control_message(c: Option<Color>) -> String {
-  let color_str = match c {
-    Some(color) => color.to_string(),
-    None => "No color".to_string()
+fn control_message(control: MatchControl) -> String {
+  let control_str = match control {
+    MatchControl::Both => "Both colors".to_string(),
+    MatchControl::Single(color) => color.to_string(),
+    MatchControl::None => "No color".to_string(),
   };
-  format!("You control: {}", color_str)
+  format!("You control: {}", control_str)
 }
 
 fn clear_children(el: &Element) -> Result<(), wasm_bindgen::JsValue> {
