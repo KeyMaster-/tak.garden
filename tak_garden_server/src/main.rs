@@ -81,54 +81,61 @@ impl Match {
   }
 }
 
+struct MatchIDHasher(Harsh);
+impl MatchIDHasher {
+  fn new(salt: &str, length: usize) -> Self {
+    Self(HarshBuilder::new().salt(salt).length(length).build().expect("Couldn't construct a hasher."))
+  }
+  fn encode(&self, id: MatchID) -> String {
+    self.0.encode(&[id])
+  }
+
+  fn decode(&self, hash: &str) -> Option<MatchID> {
+    self.0.decode(hash).ok().and_then(|id_vec| (id_vec.len() == 1).then(|| id_vec[0]))
+  }
+}
+
+impl Default for MatchIDHasher {
+  fn default() -> Self {
+    MatchIDHasher::new("tak.garden", 6)
+  }
+}
+
 struct Matches {
   next_id: MatchID,
-  hasher: Arc<Harsh>,
+  hasher: MatchIDHasher,
   matches: HashMap<MatchID, MatchRef>
 }
 
 impl Matches {
-  fn new(hasher: Arc<Harsh>) -> Self {
+  fn new() -> Self {
     Self {
       next_id: 1_u64,
-      hasher,
+      hasher: Default::default(),
       matches: HashMap::new()
     }
   }
 
-  fn new_match(&mut self) -> MatchID {
+  fn new_match(&mut self) -> MatchRef {
     let out_id = self.next_id;
     self.next_id += 1;
-    let id_hash = self.hasher.encode(&[out_id]);
-    self.matches.insert(out_id, Arc::new(RwLock::new(Match::new(id_hash, BoardSize::new(5).unwrap()))));
-    out_id
+    let id_hash = self.hasher.encode(out_id);
+    println!("Generating new game {},{}", out_id, id_hash);
+    
+    let match_ref = Arc::new(RwLock::new(Match::new(id_hash, BoardSize::new(5).unwrap())));
+    self.matches.insert(out_id, match_ref.clone());
+    match_ref
   }
 
-  fn get(&self, id: MatchID) -> MatchRef {
-    self.matches[&id].clone()
+  fn get<T>(&self, hash: T) -> Option<MatchRef> 
+    where T: AsRef<str>
+  {
+    self.hasher.decode(hash.as_ref()).and_then(|id| self.matches.get(&id).cloned())
   }
 }
 
 type MatchRef = Arc<RwLock<Match>>;
 type MatchesRef = Arc<RwLock<Matches>>;
-
-// type ControllerIDs = Arc<(AtomicUsize, AtomicUsize)>;
-
-// #[derive(Debug)]
-// struct GameId(String);
-
-// TODO consider using the FromStr + a lazy static to get at the hasher, instead of doing and_then filter backflips
-// impl FromStr for GameId {
-//   type Err = ();
-
-//   fn from_str(s: &str) -> Result<Self, Self::Err> {
-//     if s == "abcdef" {
-//       Ok(Self(s.to_string()))
-//     } else {
-//       Err(())
-//     }
-//   }
-// }
 
 #[tokio::main]
 async fn main() {
@@ -136,62 +143,24 @@ async fn main() {
   let next_connection_id = Arc::new(RwLock::new(NO_CONNECTION_ID + 1));
   let connections = ConnectionsRef::default();
 
-  let match_id_hasher = Arc::new(HarshBuilder::new().salt("tak.garden").length(6).build().expect("Couldn't construct a hasher."));
-  let matches = Arc::new(RwLock::new(Matches::new(match_id_hasher.clone())));
-
-  // let match_state = Arc::new(RwLock::new(MoveHistory::new(BoardSize::new(5).unwrap())));
-  //   // make a filter that provides a reference to our game state
-  // let match_state = warp::any().map(move || match_state.clone());
-
-  // let connections = Connections::default();
-  // let connections = warp::any().map(move || connections.clone());
-
-  // let controller_ids = Arc::new((AtomicUsize::new(NO_CONNECTION_ID), AtomicUsize::new(NO_CONNECTION_ID)));
-  // let controller_ids = warp::any().map(move || controller_ids.clone());
-
-  // let next_game_id = Arc::new(RwLock::new(1_u64));
-  // let next_game_id = warp::any().map(move || next_game_id.clone());
+  let matches = Arc::new(RwLock::new(Matches::new()));
 
   // Create warp filters that supply cloned refs to each of our global data structures on each ws connection
   let data = {
-    let match_id_hasher = match_id_hasher.clone();
-    warp::any().map(move || (next_connection_id.clone(), connections.clone(), match_id_hasher.clone(), matches.clone()))
+    let matches = matches.clone();
+    warp::any().map(move || (next_connection_id.clone(), connections.clone(), matches.clone()))
   };
+
   let ws_connect = warp::path!("ws")
     .and(warp::ws()).and(data)
-    .map(|ws: warp::ws::Ws, (next_connection_id, connections, match_id_hasher, matches)| {
-      ws.on_upgrade(move |socket| on_connected(socket, next_connection_id, connections, match_id_hasher, matches))
+    .map(|ws: warp::ws::Ws, (next_connection_id, connections, matches)| {
+      ws.on_upgrade(move |socket| on_connected(socket, next_connection_id, connections, matches))
     });
 
   let static_files = warp::fs::dir("dist");
 
-  // let hasher2 = hasher.clone();
-  // let root = warp::path::end()
-  //   .and(next_game_id) // TODO this and the hasher can be combined into a single "generate next id hash" function to pass in
-  //   .and(warp::any().map(move || hasher2.clone()))
-  //   .and_then(|next_game_id: Arc<RwLock<u64>>, hasher: Arc<Harsh>| async move {
-  //     let game_id = {
-  //       let mut next_id = next_game_id.write().await;
-  //       let game_id = *next_id;
-  //       *next_id += 1;
-
-  //       game_id
-  //     };
-
-  //     let game_hash = hasher.encode(&[game_id]);
-  //     let uri: Uri = format!("/{}", game_hash).parse().expect("/<game id> wasn't a valid uri");
-
-  //       // The async block needs to know its full type, and since we never return the Err variant, it doesn't know it's error type
-  //       // There's no easy way to annotate the type of the async block itself, so instead we're being explicit about the full type that this Ok comes from here,
-  //       // which gives type inference all the info it needs.
-  //     Ok::<Uri, warp::reject::Rejection>(uri)
-  //   })
-  //   .map(|uri| {
-  //     warp::redirect::temporary(uri)
-  //   });
-
   let game = warp::path::end()
-    .or(game_hash_to_id(match_id_hasher.clone()))
+    .or(match_id_hash(matches.clone()))
     .and(warp::fs::file("dist/index.html"))
     .map(|_, reply: warp::filters::fs::File| {
       reply.into_response()
@@ -203,21 +172,16 @@ async fn main() {
     .run(([127, 0, 0, 1], 3030)).await;
 }
 
-fn game_hash_to_id(hasher: Arc<Harsh>) -> impl Filter<Extract = (MatchID,), Error = warp::reject::Rejection> + Clone {
+fn match_id_hash(matches: Arc<RwLock<Matches>>) -> impl Filter<Extract = (MatchRef,), Error = warp::reject::Rejection> + Clone {
   warp::path::param()
-    .and(warp::any().map(move || hasher.clone())) // This is the only way I found to provide a clone'd resource to this while keeping the and_then closure Fn and the overall result Clone
-    .and_then(move |game_hash: String, hasher: Arc<Harsh>| async move {
-      // TODO make this more robust, any ID that _could_ have hashed to a valid integer would be passed through here
-      // should also check against the games we actually have in memory (/ in the db)
-      decode_match_id_hash(&game_hash, &hasher).ok_or(warp::reject::not_found())
+    .and(warp::any().map(move || matches.clone())) // This is the only way I found to provide a clone'd resource to this while keeping the and_then closure Fn and the overall result Clone
+    .and_then(move |id_hash: String, matches: Arc<RwLock<Matches>>| async move {
+      matches.read().await.get(&id_hash).ok_or(warp::reject::not_found())
+      // decode_match_id_hash(&game_hash, &hasher).ok_or(warp::reject::not_found())
     })
 }
 
-fn decode_match_id_hash(hash: &str, hasher: &Harsh) -> Option<MatchID> {
-  hasher.decode(hash).ok().and_then(|id_vec| (id_vec.len() == 1).then(|| id_vec[0]))
-}
-
-async fn on_connected(ws: WebSocket, next_connection_id: Arc<RwLock<ConnectionID>>, connections: ConnectionsRef, match_id_hasher: Arc<Harsh>, matches: MatchesRef) {
+async fn on_connected(ws: WebSocket, next_connection_id: Arc<RwLock<ConnectionID>>, connections: ConnectionsRef, matches: MatchesRef) {
     // Since mpsc senders don't implement Eq, we need an id to associate with each
     // connection to be able to store and later remove them in a collection
 
@@ -242,26 +206,6 @@ async fn on_connected(ws: WebSocket, next_connection_id: Arc<RwLock<ConnectionID
   }));
 
   connections.write().await.insert(conn_id, tx.clone());
-
-  //   // TODO read up on Ordering and figure out if it matters here
-  // let is_white_controller = controller_ids.0.compare_exchange(NO_CONNECTION_ID, my_id, Ordering::Relaxed, Ordering::Relaxed).is_ok();
-  // let is_black_controller = if !is_white_controller {
-  //   controller_ids.1.compare_exchange(NO_CONNECTION_ID, my_id, Ordering::Relaxed, Ordering::Relaxed).is_ok()
-  // } else {
-  //   false
-  // };
-
-  // let controlled_color = if is_white_controller {
-  //   Some(Color::White)
-  // } else if is_black_controller {
-  //   Some(Color::Black)
-  // } else {
-  //   None
-  // };
-
-  // // send initial state
-  // send_match_state(&tx, &match_state).await;
-  // send_msg(&tx, &ServerMessage::Control(controlled_color));
 
     // ID of the match this connection is in
   let mut match_ref: Option<MatchRef> = None;
@@ -290,13 +234,11 @@ async fn on_connected(ws: WebSocket, next_connection_id: Arc<RwLock<ConnectionID
     let client_msg = deser_res.unwrap();
     match client_msg {
       ClientMessage::JoinMatch(hash_opt) => {
-          // Remove ourselves from our current match, if any. `take` clears out match_ref along the way
+          // Remove ourselves from our current match, if any. `take` turns match_ref into None along the way
         if let Some(match_ref) = match_ref.take() {
           match_ref.write().await.remove_connection(conn_id);
         }
-        let id_opt = hash_opt.and_then(|hash| decode_match_id_hash(&hash, &match_id_hasher));
-        let match_id = join_match(id_opt, conn_id, &tx, &matches).await;
-        match_ref = Some(matches.read().await.get(match_id)); // Cache the match ref so we don't have to go through the matches map each time
+        match_ref = Some(join_match(hash_opt, conn_id, &tx, &matches).await); // Cache the match ref so we don't have to go through the matches map each time
       },
       ClientMessage::Move(m) => {
         if let Some(ref match_ref) = match_ref {
@@ -324,14 +266,16 @@ async fn on_connected(ws: WebSocket, next_connection_id: Arc<RwLock<ConnectionID
   on_disconnected(match_ref, conn_id, &connections).await;
 }
 
-async fn join_match(match_id: Option<MatchID>, conn_id: ConnectionID, sender: &ConnectionSender, matches: &MatchesRef) -> MatchID {
-  let match_id = if let Some(id) = match_id {
-    id
+// if match_id is Some, the provided MatchID is assumed to already exist.
+async fn join_match<T>(match_id_hash: Option<T>, conn_id: ConnectionID, sender: &ConnectionSender, matches: &MatchesRef) -> MatchRef 
+  where T: AsRef<str>
+{
+  let match_ref = if let Some(hash) = match_id_hash {
+    matches.read().await.get(hash).expect("Match ID hash passed to join_match should be of an existing game.")
   } else {
     matches.write().await.new_match()
   };
 
-  let match_ref = matches.read().await.get(match_id);
   let controlled_color = match_ref.write().await.add_connection(conn_id, sender.clone());
 
   {
@@ -340,7 +284,7 @@ async fn join_match(match_id: Option<MatchID>, conn_id: ConnectionID, sender: &C
   }
   send_msg(sender, &ServerMessage::Control(controlled_color));
 
-  match_id
+  match_ref
 }
 
 async fn on_move(m: Move, match_state: &MatchRef, conn_id: ConnectionID, sender: &ConnectionSender) {
