@@ -273,6 +273,10 @@ impl Client {
           space_actions.push(
             (cur_loc, Box::new(
               |game| -> _ {
+                  // Don't try to do a drop that will fail if we have nothing to drop.
+                  // We still allow the user to click on this space even if it will do nothing because we don't want this space to undo their move.
+                if carry.count() == 0 { return Ok(()) }
+
                 let action = MoveAction::Drop { count: 1 };
                 game.do_action(action)?;
 
