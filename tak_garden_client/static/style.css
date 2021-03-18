@@ -94,7 +94,11 @@ div {
 
 .history span {
   color: #f9f9f9;
-  scroll-snap-align: end; /* Snap the bottom of a move row to the bottom of the scroll container, since most often we want to scroll down to the latest move. */
+  /* Snap the bottom of a move row to the bottom of the scroll container, since most often we want to scroll down to the latest move. */
+  /* The two values specify snapping for the block and inline direction (here: vertical, horizontal).*/
+  /* Currently (18.03.21) this is necessary to prevent Firefox from scrolling the rows to the right and cutting off the move numbers.*/
+  /* See this bug: https://bugzilla.mozilla.org/show_bug.cgi?id=1699573 */
+  scroll-snap-align: end start;
 }
 
 .turn-number {
