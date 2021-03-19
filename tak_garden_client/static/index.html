@@ -10,7 +10,12 @@
       <div id="board-row" class="board-row">
         <div id="board-wrapper" class="board-wrapper">
           <div id="history-wrapper" class="history-wrapper">
-            <div id="history" class="history"></div>
+            <div id="history" class="history history-grid"></div>
+            <div id="history-nav" class="history-nav history-grid">
+              <div></div> <!-- Spacer that takes up move number column -->
+              <button type="submit" id="history-back" class="button nav">&lt;</button>
+              <button type="submit" id="history-forward" class="button nav">&gt;</button>
+            </div>
           </div>
           <div id="ranks" class="ranks"></div>
           <div id="board" class="board">
@@ -18,10 +23,10 @@
             <div id="stones" class="stones"></div>
           </div>
           <div id="control-display" class="control-display">
-            <div id="control-bar-light"   class="control-bar   light">
+            <div id="control-bar-light"   class="control-bar light">
               <div id="control-count-light" class="control-count top stone-text dark"></div>
             </div>
-            <div id="control-bar-dark"   class="control-bar   dark">
+            <div id="control-bar-dark"   class="control-bar dark">
               <div id="control-count-dark" class="control-count bottom stone-text light"></div>
             </div>
           </div>

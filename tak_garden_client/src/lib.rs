@@ -90,7 +90,9 @@ impl ClientInterface {
 
 struct MatchState {
   history: MoveHistory,
-  display_move_idx: usize, // TODO this is now only used to figure it if we're viewing the last state. Combine this with state in a more ergonomic way
+    // TODO this is now only used to figure it if we're viewing the last state. Combine this with state in a more ergonomic way
+    // Also setting the currently shown index should implicitly update the game_state field
+  display_move_idx: usize,
   game_state: Game,
 }
 
@@ -390,6 +392,20 @@ impl Client {
     if let Some(match_state) = &mut self.match_state {
       match_state.display_move_idx = move_idx;
       match_state.game_state = match_state.history.state(move_idx);
+    }
+
+    self.display.as_mut().unwrap().update(self.match_state.as_ref().unwrap());
+  }
+
+  fn on_history_step(&mut self, offset: i8) {
+    if let Some(match_state) = &mut self.match_state {
+        // If we're at index 0, we want to stay there (we have no moves yet)
+        // TODO this logic should really determine if the button is clickable in the first place
+      if match_state.display_move_idx != 0 {
+          // Otherwise, offset and clamp between [1, moves count]. 1 is "after the first move" and moves count is "after the last move"
+        match_state.display_move_idx = (match_state.display_move_idx as isize + offset as isize).clamp(1, match_state.history.moves().len() as isize) as usize;
+        match_state.game_state = match_state.history.state(match_state.display_move_idx);
+      }
     }
 
     self.display.as_mut().unwrap().update(self.match_state.as_ref().unwrap());
@@ -760,6 +776,22 @@ impl Display {
         history.set_scroll_top(scroll_top)
       } else {
         history.set_scroll_top(history.scroll_height() - history.client_height());
+      }
+
+        // TODO The callbacks for these elements shouldn't be re-gen'd every display update. 
+      let history_back: HtmlElement    = document.get_element_by_id("history-back").expect("Couldn't get history-back div").dyn_into()?;
+      let history_forward: HtmlElement = document.get_element_by_id("history-forward").expect("Couldn't get history-forward div").dyn_into()?;
+        // TODO this can become a simple array once IntoIterator is implemented properly for arrays, which allows us to get an owning iterator in the for loop.
+        // See this PR: https://github.com/rust-lang/rust/pull/65819
+      let nav_els = vec![(history_back, -1), (history_forward, 1)]; 
+      for (el, offset) in nav_els.into_iter() {
+        let client_ref = self.client_ref.clone();
+        let callback = Closure::wrap(Box::new(move || {
+          client_ref.borrow_mut().on_history_step(offset);
+        }) as Box<dyn Fn()>);
+
+        el.set_onclick(Some(callback.as_ref().unchecked_ref()));
+        self.click_closures.push(callback);
       }
       
 
