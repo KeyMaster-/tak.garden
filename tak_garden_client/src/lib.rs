@@ -134,7 +134,6 @@ impl Client {
       }
     };
 
-    console_log!("Game id: {:?}", match_id);
     let msg = ClientMessage::JoinMatch(match_id);
     self.send_message(&msg);
   }
