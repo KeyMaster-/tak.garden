@@ -6,7 +6,7 @@ h1 {
   color: #f9f9f9;
 }
 
-p, footer, #game_status, #player_status {
+footer, #game_status, #player_status, #output {
   color: #ddd;
 }
 
@@ -132,9 +132,18 @@ div {
   margin-top: 0.2em; /* Set to match the grid-row-gap of .history-grid */
 }
 
-.button.nav {
+button.nav {
   flex-grow: 1;
 }
+
+button.nav svg {
+  /* I would like to the height of the icons exactly match the text elements in the history list, */
+  /* but 1em seems to be less than the actual height the elements end up at (1em is 20 at 20px font size, but elements get ~height 24) */
+  /* 1.2 seems to match the actual height pretty well */
+  height: 1.2em;
+  width: 1.2em;
+}
+
 
 .ranks {
   grid-area: ranks;
@@ -391,18 +400,47 @@ div {
   padding-bottom: 100%;
 }
 
+button {
+  font-size: 20px;
+  background-color: #ddd;
+  border: none;
+  border-radius: 0.2em;
+
+  box-shadow: 0 0 5px 2px rgba(0,0,0,0.4);
+}
+
+button:active {
+  background-color: #aaa;
+  box-shadow: none;
+}
+
+button.disabled {
+  pointer-events: none;
+  /*background-color: #888;
+  color: #333;*/
+  opacity: 0.5;
+  box-shadow: none;
+}
+
+#move-submit {
+  padding: 0.25em 1.5ch;
+}
+
 .status-display {
   display: flex;
   flex-direction: row;
   justify-content: space-between;
-  padding-bottom: 1em;
+  font-size: 20px;
 }
 
 .input-row {
   display: flex;
   flex-direction: row;
   justify-content: space-between;
-  padding-bottom: 1em;
+}
+
+.main-row {
+  margin-bottom: 1em;
 }
 
 /* === Size-specific rules === */

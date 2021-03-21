@@ -13,8 +13,13 @@
             <div id="history" class="history history-grid"></div>
             <div id="history-nav" class="history-nav history-grid">
               <div></div> <!-- Spacer that takes up move number column -->
-              <button type="submit" id="history-back" class="button nav">&lt;</button>
-              <button type="submit" id="history-forward" class="button nav">&gt;</button>
+              <!-- These buttons start out disabled on page-load -->
+              <button type="submit" id="history-back" class="nav disabled">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M16.2426 6.34317L14.8284 4.92896L7.75739 12L14.8285 19.0711L16.2427 17.6569L10.5858 12L16.2426 6.34317Z" fill="currentColor"/></svg>
+              </button>
+              <button type="submit" id="history-forward" class="nav disabled">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10.5858 6.34317L12 4.92896L19.0711 12L12 19.0711L10.5858 17.6569L16.2427 12L10.5858 6.34317Z" fill="currentColor"/></svg>
+              </button>
             </div>
           </div>
           <div id="ranks" class="ranks"></div>
@@ -55,19 +60,19 @@
           </div>
         </div>
       </div>
-      <div id="status-display" class="status-display">
+      <button type="submit" id="move-submit" class="main-row">Submit Move</button>
+      <div id="status-display" class="status-display main-row">
         <span id="game_status"></span>
         <span style="white-space: pre"> </span>
         <span id="player_status"></span>
       </div>
-      <div id="input-row" class="input-row">
+      <div id="input-row" class="input-row main-row">
         <input type="text" id="input" />
-        <button type="submit" id="submit-move">Submit Interactive Move</button>
       </div>
-      <p id="output">
+      <span id="output" class="main-row">
         Connecting...
-      </p>
-      <footer id="footer">Game info: <a href="https://cheapass.com/tak/">cheapass.com/tak</a> | Website by Tilman Schmidt <a href="https://www.twitter.com/keymaster_">(@keymaster_)</a> | Design adapted from <a href="https://ptn.ninja">ptn.ninja</a></footer>
+      </span>
+      <footer id="footer"><a href="https://cheapass.com/wp-content/uploads/2018/04/UniversityRulesSM.pdf">Rules (PDF)</a> | Game info: <a href="https://cheapass.com/tak/">cheapass.com/tak</a> | Website by Tilman Schmidt <a href="https://www.twitter.com/keymaster_">(@keymaster_)</a> | Design adapted from <a href="https://ptn.ninja">ptn.ninja</a> | Icons by <a href="https://css.gg/">css.gg</a></footer>
     </div>
     <script src="./bootstrap.js"></script>
   </body>

@@ -727,7 +727,6 @@ impl Display {
       control_bar_dark.style().set_property("height", &format!("{}%", black_height_percent))?;
 
       let history = document.get_element_by_id("history").expect("Couldn't get history div");
-      // let history_table = document.get_element_by_id("history-table").expect("Couldn't get history-table element");
 
         // Determine if we are scrolled to the bottom of the moves list before we clear & reconstruct it
       let scroll_to_restore = if history.scroll_top() < (history.scroll_height() - history.client_height()) {
@@ -738,9 +737,6 @@ impl Display {
 
       clear_children(&history)?;
 
-        // Inclusive loop to add 1 extra element, representing the move in progress
-        // That element is useful both to signify who's turn it is, and for the player to click on
-        // if it is their turn to get back to their in-progress turn after looking at past game states
       let moves = match_state.history.moves();
       for move_idx in 0..moves.len() {
         if move_idx % 2 == 0 {
@@ -780,6 +776,19 @@ impl Display {
         // TODO The callbacks for these elements shouldn't be re-gen'd every display update. 
       let history_back: HtmlElement    = document.get_element_by_id("history-back").expect("Couldn't get history-back div").dyn_into()?;
       let history_forward: HtmlElement = document.get_element_by_id("history-forward").expect("Couldn't get history-forward div").dyn_into()?;
+
+      if moves.len() == 0 || match_state.display_move_idx == 1 {
+        history_back.class_list().add_1("disabled")?;
+      } else {
+        history_back.class_list().remove_1("disabled")?;
+      }
+
+      if moves.len() == 0 || match_state.display_move_idx == moves.len() {
+        history_forward.class_list().add_1("disabled")?;
+      } else {
+        history_forward.class_list().remove_1("disabled")?;
+      }
+
         // TODO this can become a simple array once IntoIterator is implemented properly for arrays, which allows us to get an owning iterator in the for loop.
         // See this PR: https://github.com/rust-lang/rust/pull/65819
       let nav_els = vec![(history_back, -1), (history_forward, 1)]; 
@@ -810,6 +819,19 @@ impl Display {
         }
         Ok(status_text)
       };
+
+      let move_submit: HtmlElement = document.get_element_by_id("move-submit").expect("Couldn't get move-submit button").dyn_into()?;
+      if game.move_state() == &MoveState::Start {
+        move_submit.class_list().add_1("disabled")?;
+      } else {
+        move_submit.class_list().remove_1("disabled")?;
+      }
+
+      if let MoveState::Movement { cur_loc, carry, .. } = game.move_state() {
+        let existing_stack = &game.board()[*cur_loc];
+        let base_draw_z = existing_stack.count() + 1; // We should never be hovering an existing stack with a capstone / standing stone on top, so we can ignore the -1 correction here.
+        make_stack_elements(carry, cur_loc.x(), cur_loc.y(), base_draw_z, 1)?;
+      }
 
       let status_text = get_status_text().expect("Couldn't write status text");
 
@@ -858,6 +880,7 @@ impl Display {
       let ranks = document.get_element_by_id("ranks").expect("Couldn't get ranks div");
       let control_display = document.get_element_by_id("control-display").expect("Couldn't get control-display div");
 
+      let move_submit = document.get_element_by_id("move-submit").expect("Couldn't get move-submit button");
       let status_display = document.get_element_by_id("status-display").expect("Couldn't get status-display div");
       let input_row = document.get_element_by_id("input-row").expect("Couldn't get input-row div");
       let output_row = document.get_element_by_id("output").expect("Couldn't get output div");
@@ -868,6 +891,7 @@ impl Display {
       let history_wrapper_size = get_dimensions(&window, &history_wrapper)?;
       let files_size = get_dimensions(&window, &files)?;
       let ranks_size = get_dimensions(&window, &ranks)?;
+      let move_submit_size = get_dimensions(&window, &move_submit)?;
       let control_display_size = get_dimensions(&window, &control_display)?;
       let status_display_size = get_dimensions(&window, &status_display)?;
       let input_row_size = get_dimensions(&window, &input_row)?;
@@ -875,7 +899,7 @@ impl Display {
       let footer_size = get_dimensions(&window, &footer)?;
 
       // TODO I'm basically doing layouting myself at this point. This feels extremely not in the spirit of css
-      let available_height = main_wrapper_size.1 - header_size.1 - files_size.1 - status_display_size.1 - input_row_size.1 - output_row_size.1 - footer_size.1;
+      let available_height = main_wrapper_size.1 - header_size.1 - files_size.1 - move_submit_size.1 - status_display_size.1 - input_row_size.1 - output_row_size.1 - footer_size.1;
         // take the maximum of total width of everything to the left and right of the board
         // then pretend we have that width on either side.
         // this is necessary so that after we center the wrapper to the board neither side overflows outside of the window.
