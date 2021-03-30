@@ -618,11 +618,29 @@ impl Display {
         }
       };
 
-        // base_draw_z is at what height we start drawing the stack
-        // z_offset is by what we offset the draw z of each stone relative to where it would be drawn
-        // this is relevant to capstone / standing stone offsetting - the z_offset applies _after_ the (potentially saturated) -1 subtraction in stone_draw_z
-      let make_stack_elements = |stack: &StoneStack, x, y, base_draw_z, z_offset| -> Result<(), JsValue> {
+        // Draw a stack, with the first stone placed at logical z base_draw_z
+      let make_stack_elements = |stack: &StoneStack, x, y, base_draw_z| -> Result<(), JsValue> {
+        let buried_count = stack.count().saturating_sub(board_size);
+
         for (idx, stone) in stack.iter().enumerate() {
+          let buried = idx < buried_count;
+
+          let wrapper: HtmlElement = document.create_element("div")?.dyn_into()?;
+          wrapper.class_list().add_1("stone-wrapper")?;
+
+            // Draw the buried stones at their normal indices
+            // Anything above that gets offset down by the buried count, i.e. the first non-buried stone is drawn at index 0
+          let stack_draw_idx = if buried {
+            idx
+          } else {
+            idx - buried_count
+          };
+          let z = stone_draw_z(base_draw_z + stack_draw_idx, stone.kind);
+
+          let transform_x = x * 100;
+          let transform_y = (y as isize) * -100 + (z as isize) * -7;
+          wrapper.style().set_property("transform", &format!("translate({}%, {}%)", transform_x, transform_y))?; // TODO add logical z transform to get correct depth sorting
+
           let color_class = match stone.color {
             Color::White => "light",
             Color::Black => "dark"
@@ -634,20 +652,15 @@ impl Display {
             StoneKind::Capstone => Some("cap")
           };
 
-          let z = stone_draw_z(base_draw_z + idx, stone.kind) + z_offset;
-
-          let wrapper: HtmlElement = document.create_element("div")?.dyn_into()?;
-          wrapper.class_list().add_1("stone-wrapper")?;
-
-          let transform_x = x * 100;
-          let transform_y = (y as isize) * -100 + (z as isize) * -7;
-          wrapper.style().set_property("transform", &format!("translate({}%, {}%)", transform_x, transform_y))?; // TODO add logical z transform to get correct depth sorting
-
           let stone_el = document.create_element("div")?;
           stone_el.class_list().add_2("stone", color_class)?;
 
           if let Some(kind_class) = kind_class {
             stone_el.class_list().add_1(kind_class)?;
+          }
+
+          if buried {
+            stone_el.class_list().add_1("buried")?;
           }
 
           wrapper.append_child(&stone_el)?;
@@ -660,14 +673,13 @@ impl Display {
       for x in 0..board_size {
         for y in 0..board_size {
           let stack = game.board().get(x, y);
-          make_stack_elements(stack, x, y, 0, 0)?;
+          make_stack_elements(stack, x, y, 0)?;
         }
       }
 
       if let MoveState::Movement { cur_loc, carry, .. } = game.move_state() {
         let existing_stack = &game.board()[*cur_loc];
-        let base_draw_z = existing_stack.count() + 1; // We should never be hovering an existing stack with a capstone / standing stone on top, so we can ignore the -1 correction here.
-        make_stack_elements(carry, cur_loc.x(), cur_loc.y(), base_draw_z, 1)?;
+        make_stack_elements(carry, cur_loc.x(), cur_loc.y(), existing_stack.count() + 2)?; // base_draw_z is the existing stack count (logical z of one above the top existing stone) + 2 for a noticeable gap to the hovered stack
       }
 
       let (mut white_control, mut black_control) = game.board().count_flats_control();

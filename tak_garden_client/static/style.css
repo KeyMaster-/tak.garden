@@ -357,7 +357,7 @@ button.nav svg {
 .stone.buried {
   width: 15%;
   height: 15%;
-  right: 10%; /* Buried stones show up as a second stack to the right of the main stack */
+  right: 7%; /* Buried stones show up as a second stack to the right of the main stack */
   bottom: 25%;
 
   border-radius: 20%; /* Needs bigger rounding since the rectangle is much smaller */
@@ -375,7 +375,7 @@ button.nav svg {
   height: 45%;
   right: 27.5%;
   bottom: 27.5%;
-  
+
   border-radius: 50%;
 }
 
