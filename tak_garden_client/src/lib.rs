@@ -801,7 +801,6 @@ impl Display {
         el.set_onclick(Some(callback.as_ref().unchecked_ref()));
         self.click_closures.push(callback);
       }
-      
 
       let get_status_text = || -> Result<String, std::fmt::Error> {
         let mut status_text = String::new();
@@ -825,12 +824,6 @@ impl Display {
         move_submit.class_list().add_1("disabled")?;
       } else {
         move_submit.class_list().remove_1("disabled")?;
-      }
-
-      if let MoveState::Movement { cur_loc, carry, .. } = game.move_state() {
-        let existing_stack = &game.board()[*cur_loc];
-        let base_draw_z = existing_stack.count() + 1; // We should never be hovering an existing stack with a capstone / standing stone on top, so we can ignore the -1 correction here.
-        make_stack_elements(carry, cur_loc.x(), cur_loc.y(), base_draw_z, 1)?;
       }
 
       let status_text = get_status_text().expect("Couldn't write status text");
