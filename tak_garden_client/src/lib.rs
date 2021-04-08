@@ -2,7 +2,7 @@ mod utils;
 
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{Element, HtmlElement, Window};
+use web_sys::{Element, HtmlElement, Window, EventTarget, KeyboardEvent};
 use tak_garden_common::{ServerMessage, ClientMessage, MatchControl};
 use rustak::{
   MoveHistory, Game, GameState, MoveState, MoveAction, WinKind, 
@@ -106,6 +106,12 @@ struct Client {
 struct Display {
   client_ref: Rc<RefCell<Client>>,
   click_closures: Vec<Closure<dyn Fn()>>,
+  key_callback: Option<Closure<dyn Fn(KeyboardEvent)>>,
+}
+
+enum HistoryJumpTarget {
+  Start,
+  End
 }
 
 impl Client {
@@ -387,6 +393,7 @@ impl Client {
     }
   }
 
+  // TODO all the history move idx change functions could be combined into a single one with an enum for set/offset/jump
   fn on_history_click(&mut self, move_idx: usize) {
     if let Some(match_state) = &mut self.match_state {
       match_state.display_move_idx = move_idx;
@@ -403,6 +410,20 @@ impl Client {
       if match_state.display_move_idx != 0 {
           // Otherwise, offset and clamp between [1, moves count]. 1 is "after the first move" and moves count is "after the last move"
         match_state.display_move_idx = (match_state.display_move_idx as isize + offset as isize).clamp(1, match_state.history.moves().len() as isize) as usize;
+        match_state.game_state = match_state.history.state(match_state.display_move_idx);
+      }
+    }
+
+    self.display.as_mut().unwrap().update(self.match_state.as_ref().unwrap());
+  }
+
+  fn on_history_jump(&mut self, target: HistoryJumpTarget) {
+    if let Some(match_state) = &mut self.match_state {
+      if match_state.display_move_idx != 0 {
+        match_state.display_move_idx = match target {
+          HistoryJumpTarget::Start => 1,
+          HistoryJumpTarget::End => match_state.history.moves().len(),
+        };
         match_state.game_state = match_state.history.state(match_state.display_move_idx);
       }
     }
@@ -490,10 +511,45 @@ fn clear_children(el: &Element) -> Result<(), wasm_bindgen::JsValue> {
 
 impl Display {
   fn new(client_ref: Rc<RefCell<Client>>) -> Self {
-    Self {
+    let mut display = Self {
       client_ref,
-      click_closures: vec![]
-    }
+      click_closures: vec![],
+      key_callback: None,
+    };
+    display.init();
+    display
+  }
+
+  fn init(&mut self) {
+    (|| -> Result<(), JsValue> {
+      let window = web_sys::window().expect("Couldn't get window");
+      let document: EventTarget = window.document().expect("Couldn't get document").dyn_into()?;
+
+      let client_ref = self.client_ref.clone();
+      let callback = Closure::wrap(Box::new(move |event: KeyboardEvent| {
+        // left arrow, A
+        if [37, 65].contains(&event.key_code()) {
+          if event.shift_key() {
+            client_ref.borrow_mut().on_history_jump(HistoryJumpTarget::Start)
+          } else {
+            client_ref.borrow_mut().on_history_step(-1);
+          }
+        }
+        // right arrow, D
+        else if [39, 68].contains(&event.key_code()) {
+          if event.shift_key() {
+            client_ref.borrow_mut().on_history_jump(HistoryJumpTarget::End)
+          } else {
+            client_ref.borrow_mut().on_history_step( 1);
+          }
+        }
+      }) as Box<dyn Fn(KeyboardEvent)>);
+
+      document.add_event_listener_with_callback("keyup", callback.as_ref().unchecked_ref())?;
+      self.key_callback = Some(callback);
+      Ok(())
+    })()
+      .unwrap_or_else(|e| console_log!("Display::update error: {:?}", e));
   }
 
   fn update(&mut self, match_state: &MatchState) {
@@ -815,9 +871,11 @@ impl Display {
 
         // TODO this can become a simple array once IntoIterator is implemented properly for arrays, which allows us to get an owning iterator in the for loop.
         // See this PR: https://github.com/rust-lang/rust/pull/65819
-      let nav_els = vec![(history_back, -1), (history_forward, 1)]; 
-      for (el, offset) in nav_els.into_iter() {
+      let nav_els = [(history_back, -1), (history_forward, 1)];
+      for (el, offset) in nav_els.iter() {
         let client_ref = self.client_ref.clone();
+        let offset = *offset; // copy the offset value so we don't reference nav_els from inside our move closure
+
         let callback = Closure::wrap(Box::new(move || {
           client_ref.borrow_mut().on_history_step(offset);
         }) as Box<dyn Fn()>);
