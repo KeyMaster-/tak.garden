@@ -7,7 +7,7 @@ use tak_garden_common::{ServerMessage, ClientMessage, MatchControl};
 use rustak::{
   MoveHistory, Game, GameState, MoveState, MoveAction, WinKind, 
   BoardSize, Location, Direction, Color,
-  StoneKind, StoneStack,
+  Stone, StoneKind, StoneStack,
   ActionInvalidReason, PlacementInvalidReason, MovementInvalidReason,
   file_idx_to_char,
 };
@@ -608,63 +608,73 @@ impl Display {
       let stones = document.get_element_by_id("stones").expect("Couldn't get stones div");
       clear_children(&stones)?;
 
-      let stone_draw_z = |logical_z, kind| -> usize {
-        if kind == StoneKind::FlatStone {
-          logical_z
+      let make_stone_element = |stone: &Stone, x, y, idx: usize, buried_count| -> Result<HtmlElement, JsValue> {
+        let wrapper: HtmlElement = document.create_element("div")?.dyn_into()?;
+        wrapper.class_list().add_1("stone-wrapper")?;
+
+        let buried = idx < buried_count;
+          // Draw the buried stones at their normal indices
+          // Anything above that gets offset down by the buried count, i.e. the first non-buried stone is drawn at index 0
+        let stack_draw_idx = if buried {
+          idx
         } else {
-          // standing and cap stones should be centered on the stone below them, 
-          // so draw them at z-1 so they get the same vertical offset as the stone below them
-          logical_z.saturating_sub(1) // don't go below 0
+          idx - buried_count
+        };
+
+        let z = 
+          if stone.kind == StoneKind::FlatStone {
+            stack_draw_idx
+          } else {
+            // standing and cap stones should be centered on the stone below them, 
+            // so draw them at z-1 so they get the same vertical offset as the stone below them
+            stack_draw_idx.saturating_sub(1) // don't go below 0
+          };
+
+        let transform_x = x * 100;
+        let transform_y = (y as isize) * -100 + (z as isize) * -7;
+        wrapper.style().set_property("transform", &format!("translate({}%, {}%)", transform_x, transform_y))?; // TODO add logical z transform to get correct depth sorting
+
+        let color_class = match stone.color {
+          Color::White => "light",
+          Color::Black => "dark"
+        };
+
+        let kind_class = match stone.kind {
+          StoneKind::FlatStone => None,
+          StoneKind::StandingStone => Some("standing"),
+          StoneKind::Capstone => Some("cap")
+        };
+
+        let stone_el = document.create_element("div")?;
+        stone_el.class_list().add_2("stone", color_class)?;
+
+        if let Some(kind_class) = kind_class {
+          stone_el.class_list().add_1(kind_class)?;
         }
+
+        if buried {
+          stone_el.class_list().add_1("buried")?;
+        }
+
+        wrapper.append_child(&stone_el)?;
+        Ok(wrapper)
       };
 
         // Draw a stack, with the first stone placed at logical z base_draw_z
-      let make_stack_elements = |stack: &StoneStack, x, y, base_draw_z| -> Result<(), JsValue> {
-        let buried_count = stack.count().saturating_sub(board_size);
+      let make_stack_elements = |base_stack: &StoneStack, hover_stack: Option<&StoneStack>, x, y| -> Result<(), JsValue> {
+        let buried_count = (base_stack.count() + hover_stack.map_or(0, |stack| stack.count())).saturating_sub(board_size);
 
-        for (idx, stone) in stack.iter().enumerate() {
-          let buried = idx < buried_count;
+        for (idx, stone) in base_stack.iter().enumerate() {
+          let wrapper_el = make_stone_element(stone, x, y, idx, buried_count)?;
+          stones.append_child(&wrapper_el)?;
+        }
 
-          let wrapper: HtmlElement = document.create_element("div")?.dyn_into()?;
-          wrapper.class_list().add_1("stone-wrapper")?;
-
-            // Draw the buried stones at their normal indices
-            // Anything above that gets offset down by the buried count, i.e. the first non-buried stone is drawn at index 0
-          let stack_draw_idx = if buried {
-            idx
-          } else {
-            idx - buried_count
-          };
-          let z = stone_draw_z(base_draw_z + stack_draw_idx, stone.kind);
-
-          let transform_x = x * 100;
-          let transform_y = (y as isize) * -100 + (z as isize) * -7;
-          wrapper.style().set_property("transform", &format!("translate({}%, {}%)", transform_x, transform_y))?; // TODO add logical z transform to get correct depth sorting
-
-          let color_class = match stone.color {
-            Color::White => "light",
-            Color::Black => "dark"
-          };
-
-          let kind_class = match stone.kind {
-            StoneKind::FlatStone => None,
-            StoneKind::StandingStone => Some("standing"),
-            StoneKind::Capstone => Some("cap")
-          };
-
-          let stone_el = document.create_element("div")?;
-          stone_el.class_list().add_2("stone", color_class)?;
-
-          if let Some(kind_class) = kind_class {
-            stone_el.class_list().add_1(kind_class)?;
+        if let Some(hover_stack) = hover_stack {
+          let highest_base_idx = base_stack.count() - buried_count;
+          for (idx, stone) in hover_stack.iter().enumerate() {
+            let wrapper_el = make_stone_element(stone, x, y, highest_base_idx + 2 + idx, 0)?;
+            stones.append_child(&wrapper_el)?;
           }
-
-          if buried {
-            stone_el.class_list().add_1("buried")?;
-          }
-
-          wrapper.append_child(&stone_el)?;
-          stones.append_child(&wrapper)?;
         }
 
         Ok(())
@@ -673,13 +683,15 @@ impl Display {
       for x in 0..board_size {
         for y in 0..board_size {
           let stack = game.board().get(x, y);
-          make_stack_elements(stack, x, y, 0)?;
-        }
-      }
+          let hover_stack = 
+            if let MoveState::Movement { cur_loc, carry, .. } = game.move_state() {
+              if cur_loc == &(x, y) { Some(carry) } else { None }
+            } else {
+              None
+            };
 
-      if let MoveState::Movement { cur_loc, carry, .. } = game.move_state() {
-        let existing_stack = &game.board()[*cur_loc];
-        make_stack_elements(carry, cur_loc.x(), cur_loc.y(), existing_stack.count() + 2)?; // base_draw_z is the existing stack count (logical z of one above the top existing stone) + 2 for a noticeable gap to the hovered stack
+          make_stack_elements(stack, hover_stack, x, y)?;
+        }
       }
 
       let (mut white_control, mut black_control) = game.board().count_flats_control();
