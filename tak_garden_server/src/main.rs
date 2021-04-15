@@ -308,12 +308,27 @@ async fn on_connected(ws: WebSocket, next_connection_id: Arc<RwLock<ConnectionID
     let msg = match res {
       Ok(msg) => msg,
       Err(e) => {
+        // TODO Ignore specific errors that we know are harmless
+        // E.g. the "connection reset without closing handshake" message is not an issue we need to log.
         eprintln!("WebSocket error: {}", e);
         break;
       }
     };
 
+    if msg.is_close() {
+      // We don't care about the contents of the close message (the close reason etc)
+      // Nothing to be done here, after the close frame the stream will stop giving us results and we'll exit the loop
+      continue;
+    }
+
+    if msg.is_ping() {
+      // Ping messages are responded to automatically by the underlying websocket implementation,
+      // but we still see them arrive as messages. We can safely ignore it.
+      continue;
+    }
+
     if !msg.is_binary() {
+      // All other non-binary message types (namely text and pong messages) would be anomalous to see, so log them out.
       println!("Got message {:?}, but it's not binary. Ignoring.", msg);
       continue;
     }
