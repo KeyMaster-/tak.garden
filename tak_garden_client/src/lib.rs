@@ -2,7 +2,7 @@ mod utils;
 
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{Element, HtmlElement, Window, EventTarget, KeyboardEvent};
+use web_sys::{Element, HtmlElement, HtmlInputElement, Window, EventTarget, Event, KeyboardEvent};
 use tak_garden_common::{ServerMessage, ClientMessage, MatchControl};
 use rustak::{
   MoveHistory, Game, GameState, MoveState, MoveAction, WinKind, 
@@ -46,13 +46,13 @@ pub fn start() {
 }
 
 #[wasm_bindgen]
-pub fn init(connection: Connection) -> ClientInterface {
+pub fn init(connection: Connection) -> Result<ClientInterface, JsValue> {
   let client = Client::new(connection);
   let client_ref = Rc::new(RefCell::new(client));
-  let display = Display::new(client_ref.clone());
+  let display = Display::new(client_ref.clone())?;
   client_ref.borrow_mut().set_display(display);
 
-  ClientInterface::new(client_ref)
+  Ok(ClientInterface::new(client_ref))
 }
 
 #[wasm_bindgen]
@@ -105,8 +105,8 @@ struct Client {
 
 struct Display {
   client_ref: Rc<RefCell<Client>>,
-  click_closures: Vec<Closure<dyn Fn()>>,
-  key_callback: Option<Closure<dyn Fn(KeyboardEvent)>>,
+  regenerated_closures: Vec<Closure<dyn Fn()>>,
+  permanent_closures: Vec<Closure<dyn Fn(Event)>>,
 }
 
 enum HistoryJumpTarget {
@@ -493,46 +493,99 @@ fn clear_children(el: &Element) -> Result<(), wasm_bindgen::JsValue> {
 }
 
 impl Display {
-  fn new(client_ref: Rc<RefCell<Client>>) -> Self {
-    let mut display = Self {
-      client_ref,
-      click_closures: vec![],
-      key_callback: None,
+  fn new(client_ref: Rc<RefCell<Client>>) -> Result<Self, JsValue> {
+    let mut out = Self {
+      client_ref: client_ref.clone(),
+      regenerated_closures: vec![],
+      permanent_closures: vec![],
     };
-    display.init();
-    display
-  }
 
-  fn init(&mut self) {
-    (|| -> Result<(), JsValue> {
-      let window = web_sys::window().expect("Couldn't get window");
-      let document: EventTarget = window.document().expect("Couldn't get document").dyn_into()?;
+    let window = web_sys::window().expect("Couldn't get window");
+    let document = window.document().expect("Couldn't get document");
 
-      let client_ref = self.client_ref.clone();
-      let callback = Closure::wrap(Box::new(move |event: KeyboardEvent| {
-        // left arrow, A
-        if [37, 65].contains(&event.key_code()) {
-          if event.shift_key() {
-            client_ref.borrow_mut().on_history_jump(HistoryJumpTarget::Start)
-          } else {
-            client_ref.borrow_mut().on_history_step(-1);
+    { // Move submit button callback
+      let callback = {
+        let client_ref = client_ref.clone();
+
+        Closure::wrap(Box::new(move |_event: Event| {
+          client_ref.borrow_mut().submit_move();
+        }) as Box<dyn Fn(Event)>)
+      };
+
+      let event_target: EventTarget = document.get_element_by_id("move-submit").expect("Couldn't get move-submit div").dyn_into()?;
+      event_target.add_event_listener_with_callback("click", callback.as_ref().unchecked_ref())?;
+      out.permanent_closures.push(callback);
+    }
+
+    { // Action submit key callback
+      let input_box: HtmlInputElement = document.get_element_by_id("input").expect("Couldn't get input text box").dyn_into()?;
+      let callback = {
+        let client_ref = client_ref.clone();
+        let input_box = input_box.clone();
+
+        Closure::wrap(Box::new(move |event: Event| {
+          let event: KeyboardEvent = event.dyn_into().unwrap();
+
+          // Enter
+          if event.key_code() == 13 {
+            event.prevent_default();
+            client_ref.borrow_mut().submit_action(&input_box.value());
+            input_box.set_value("");
           }
-        }
-        // right arrow, D
-        else if [39, 68].contains(&event.key_code()) {
-          if event.shift_key() {
-            client_ref.borrow_mut().on_history_jump(HistoryJumpTarget::End)
-          } else {
-            client_ref.borrow_mut().on_history_step( 1);
-          }
-        }
-      }) as Box<dyn Fn(KeyboardEvent)>);
+        }) as Box<dyn Fn(Event)>)
+      };
 
-      document.add_event_listener_with_callback("keyup", callback.as_ref().unchecked_ref())?;
-      self.key_callback = Some(callback);
-      Ok(())
-    })()
-      .unwrap_or_else(|e| console_log!("Display::update error: {:?}", e));
+      let event_target: EventTarget = input_box.dyn_into()?;
+      event_target.add_event_listener_with_callback("keyup", callback.as_ref().unchecked_ref())?;
+      out.permanent_closures.push(callback);
+    }
+
+    { // History navigation key callback
+      let callback = {
+        let client_ref = client_ref.clone();
+
+        Closure::wrap(Box::new(move |event: Event| {
+          let event: KeyboardEvent = event.dyn_into().unwrap();
+
+          // left arrow, A
+          if [37, 65].contains(&event.key_code()) {
+            if event.shift_key() {
+              client_ref.borrow_mut().on_history_jump(HistoryJumpTarget::Start)
+            } else {
+              client_ref.borrow_mut().on_history_step(-1);
+            }
+          }
+          // right arrow, D
+          else if [39, 68].contains(&event.key_code()) {
+            if event.shift_key() {
+              client_ref.borrow_mut().on_history_jump(HistoryJumpTarget::End)
+            } else {
+              client_ref.borrow_mut().on_history_step( 1);
+            }
+          }
+        }) as Box<dyn Fn(Event)>)
+      };
+
+      let event_target: &EventTarget = document.dyn_ref().unwrap();
+      event_target.add_event_listener_with_callback("keyup", callback.as_ref().unchecked_ref())?;
+      out.permanent_closures.push(callback);
+    }
+    
+    { // Window resize callback
+      let callback = {
+        let client_ref = client_ref.clone();
+
+        Closure::wrap(Box::new(move |_event: Event| {
+          client_ref.borrow_mut().adjust_board_width();
+        }) as Box<dyn Fn(Event)>)
+      };
+
+      let event_target: &EventTarget = window.dyn_ref().unwrap();
+      event_target.add_event_listener_with_callback("resize", callback.as_ref().unchecked_ref())?;
+      out.permanent_closures.push(callback);
+    }
+
+    Ok(out)
   }
 
   fn update(&mut self, match_state: &MatchState) {
@@ -546,7 +599,7 @@ impl Display {
 
         // this stores all on-click closures for the whole display
         // will get re-populated by several parts of display building
-      self.click_closures.clear();
+      self.regenerated_closures.clear();
 
       // set board wrapper classes
       let board_wrapper = document.get_element_by_id("board-wrapper").expect("Couldn't get board-wrapper div");
@@ -585,7 +638,7 @@ impl Display {
           }) as Box<dyn Fn()>);
 
           space.set_onclick(Some(callback.as_ref().unchecked_ref())); // as_ref().unchecked_ref() gets &Function from Closure
-          self.click_closures.push(callback);
+          self.regenerated_closures.push(callback);
           spaces.append_child(&space)?;
 
           space_els.push((space, Location::from_coords(col, row).unwrap()));
@@ -825,7 +878,7 @@ impl Display {
         }) as Box<dyn Fn()>);
 
         move_text.set_onclick(Some(callback.as_ref().unchecked_ref())); // as_ref().unchecked_ref() gets &Function from Closure
-        self.click_closures.push(callback);
+        self.regenerated_closures.push(callback);
 
         history.append_child(&move_text)?;
       }
@@ -864,7 +917,7 @@ impl Display {
         }) as Box<dyn Fn()>);
 
         el.set_onclick(Some(callback.as_ref().unchecked_ref()));
-        self.click_closures.push(callback);
+        self.regenerated_closures.push(callback);
       }
 
       let get_status_text = || -> Result<String, std::fmt::Error> {

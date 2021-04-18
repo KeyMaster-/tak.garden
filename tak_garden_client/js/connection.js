@@ -8,9 +8,6 @@ class Connection {
   }
 
   open() {
-      // pathname should be /<game id>
-      // TODO add verification? or do we just let the server handle that?
-      //  + window.location.pathname
     const uri = 'wss://' + location.host + '/ws';
     this.ws = new WebSocket(uri);
 
