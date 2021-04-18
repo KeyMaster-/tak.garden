@@ -1,7 +1,6 @@
 class Connection {
-  constructor(display) {
+  constructor() {
     this.ws = null;
-    this.display = display;
   }
 
   set_client(client) {
@@ -16,12 +15,7 @@ class Connection {
     this.ws = new WebSocket(uri);
 
     this.ws.onopen = () => {
-      this.display.is_connected = true;
       this.client.on_connected();
-    };
-
-    this.ws.onclose = () => {
-      this.display.is_connected = false;
     };
 
     this.ws.onmessage = event => {

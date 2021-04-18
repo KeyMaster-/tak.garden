@@ -162,17 +162,11 @@ impl Client {
           player_status.set_inner_text(&control_message(control));
 
           // TODO consolidate callsites for this logic.
-          // This is here because we might not have had text in the output before, in which case this changes the available height for the board
+          // This is here because we might not have had text in the status display before, in which case this changes the available height for the board
           self.adjust_board_width();
         },
         ServerMessage::ActionInvalid(reason) => {
-          let window = web_sys::window().expect("Couldn't get window");
-          let document = window.document().expect("Couldn't get document");
-          let output: HtmlElement = document.get_element_by_id("output").expect("Couldn't find 'output' element").dyn_into()?;
-          output.set_inner_text(&reason);
-
-          // TODO consolidate callsites for this logic. See above.
-          self.adjust_board_width();
+          console_log!("Invalid action was attempted: {}", reason);
         },
         ServerMessage::GameState(match_id_hash, moves, size) => {
           let window = web_sys::window().expect("Couldn't get window");
@@ -461,17 +455,6 @@ impl Client {
       } else if ctrl_text == "swap" {
         self.send_message(&ClientMessage::SwapPlayers);
       }
-    } else {
-      self.send_move(msg);
-    }
-  }
-
-  fn send_move(&self, msg: &str) {
-    let move_parse_res = msg.parse();
-    if let Ok(m) = move_parse_res {
-      self.send_message(&ClientMessage::Move(m));
-    } else {
-      //TODO tell display that the submitted move is wrong
     }
   }
 
@@ -958,7 +941,6 @@ impl Display {
       let move_submit = document.get_element_by_id("move-submit").expect("Couldn't get move-submit button");
       let status_display = document.get_element_by_id("status-display").expect("Couldn't get status-display div");
       let input_row = document.get_element_by_id("input-row").expect("Couldn't get input-row div");
-      let output_row = document.get_element_by_id("output").expect("Couldn't get output div");
       let footer = document.get_element_by_id("footer").expect("Couldn't get footer");
 
       let main_wrapper_size = get_dimensions(&window, &main_wrapper)?;
@@ -970,11 +952,10 @@ impl Display {
       let control_display_size = get_dimensions(&window, &control_display)?;
       let status_display_size = get_dimensions(&window, &status_display)?;
       let input_row_size = get_dimensions(&window, &input_row)?;
-      let output_row_size = get_dimensions(&window, &output_row)?;
       let footer_size = get_dimensions(&window, &footer)?;
 
       // TODO I'm basically doing layouting myself at this point. This feels extremely not in the spirit of css
-      let available_height = main_wrapper_size.1 - header_size.1 - files_size.1 - move_submit_size.1 - status_display_size.1 - input_row_size.1 - output_row_size.1 - footer_size.1;
+      let available_height = main_wrapper_size.1 - header_size.1 - files_size.1 - move_submit_size.1 - status_display_size.1 - input_row_size.1 - footer_size.1;
         // take the maximum of total width of everything to the left and right of the board
         // then pretend we have that width on either side.
         // this is necessary so that after we center the wrapper to the board neither side overflows outside of the window.

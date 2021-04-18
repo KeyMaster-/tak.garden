@@ -51,18 +51,6 @@ class Display {
   set_client(client) {
     this.client = client;
   }
-
-  get is_connected() {
-    return this._is_connected;
-  }
-  set is_connected(v) {
-    this._is_connected = v;
-    if (v) {
-      output.innerText = "Connected.";
-    } else {
-      output.innerText = "Disconnected.";
-    }
-  }
 }
 
 export {

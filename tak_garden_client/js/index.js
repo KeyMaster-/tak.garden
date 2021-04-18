@@ -3,7 +3,7 @@ import { Display } from "./display.js";
 import { Connection } from "./connection.js";
 
 let display = new Display();
-let connection = new Connection(display);
+let connection = new Connection();
 
 let client = init(connection);
 display.set_client(client);
