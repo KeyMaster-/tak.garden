@@ -16,7 +16,6 @@ use harsh::{Harsh, HarshBuilder};
 
 type ConnectionID = u64;
 const NO_CONNECTION_ID: ConnectionID = 0;
-// static NEXT_CONNECTION_ID: ConnectionID = AtomicUsize::new(NO_CONNECTION_ID + 1);
 
   // Needs to be a result due to the unbounded sender -> websocket forwarding
   // Unsure what exactly the reasoning is.
@@ -411,11 +410,6 @@ async fn on_move(m: Move, match_state: &MatchRef, conn_id: ConnectionID, sender:
 
     let is_active_player = match_state.controllers().control_for(conn_id).controls(current_state.active_color());
 
-    // let is_active_player = match current_state.active_color() {
-    //   Color::White => conn_id == match_state.controllers.0,
-    //   Color::Black => conn_id == match_state.controllers.1,
-    // };
-
     if is_active_player {
       println!("Move: {}, {}", current_state.active_color(), m);
       Some(match_state.history_mut().add(m))
@@ -429,7 +423,6 @@ async fn on_move(m: Move, match_state: &MatchRef, conn_id: ConnectionID, sender:
       send_msg(&sender, &ServerMessage::ActionInvalid(format!("{}", reason)));
     } else {
       match_state.read().await.broadcast_state();
-      // broadcast_match_state(match_state).await;
     }
   } else {
     send_msg(&sender, &ServerMessage::ActionInvalid("It's not your turn.".to_string()));
