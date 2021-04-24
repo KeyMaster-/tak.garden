@@ -16,7 +16,16 @@ rustak = { path = "../../rustak" }
 
 wasm-bindgen = "0.2.63"
 
-web-sys = { version = "0.3", features = ["Window", "Document", "Location", "History", "Element", "Node", "DomTokenList", "HtmlElement", "HtmlInputElement", "HtmlCollection", "CssStyleDeclaration", "DomRect", "EventTarget", "KeyboardEvent"]}
+web-sys = { version = "0.3", features = [
+  "Window", "Document",
+  "Location", "History",
+  "EventTarget", "KeyboardEvent",
+  "Node", "Element", "HtmlElement", "HtmlInputElement", "HtmlCollection",
+  "DomTokenList", "CssStyleDeclaration", "DomRect",
+  "WebSocket", "BinaryType", "MessageEvent",
+]}
+
+js-sys = "0.3"
 
 # The `console_error_panic_hook` crate provides better debugging of panics by
 # logging them with `console.error`. This is great for development, but requires
@@ -33,6 +42,8 @@ wee_alloc = { version = "0.4.5", optional = true }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_cbor = "0.11"
+
+once_cell = "1.7"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3.13"

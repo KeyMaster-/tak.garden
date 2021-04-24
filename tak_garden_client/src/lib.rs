@@ -1,4 +1,7 @@
+mod connection;
+mod late_init;
 mod utils;
+
 
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -11,9 +14,11 @@ use rustak::{
   ActionInvalidReason, PlacementInvalidReason, MovementInvalidReason,
   file_idx_to_char,
 };
+use connection::Connection;
+use late_init::LateInit;
 use std::fmt::Write;
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
 // allocator.
@@ -27,67 +32,28 @@ extern "C" {
   fn log(s: &str);
 }
 
-macro_rules! console_log {
-  ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
+#[macro_export] macro_rules! console_log {
+    // this needs to call crate::log so that if the macro is expanded in other modules it can still find the function
+  ($($t:tt)*) => (crate::log(&format_args!($($t)*).to_string()))
 }
 
-
-#[wasm_bindgen(module = "/js/connection.js")]
-extern "C" {
-  pub type Connection;
-
-  #[wasm_bindgen(method)]
-  fn send_message(this: &Connection, msg: &[u8]);
-}
+// A static reference to our client that keeps it alive for the duration of the program
+// thread_local because we don't intend to have any other threads that would access this value
+thread_local!(static CLIENT_ANCHOR: LateInit<Rc<RefCell<Client>>> = Default::default());
 
 #[wasm_bindgen(start)]
-pub fn start() {
+pub fn start() -> Result<(), JsValue> {
   utils::set_panic_hook();
+
+  let client = Client::new()?;
+  CLIENT_ANCHOR.with(move |anchor| {
+    anchor.init(client)
+  });
+
+  Ok(())
 }
 
-#[wasm_bindgen]
-pub fn init(connection: Connection) -> Result<ClientInterface, JsValue> {
-  let client = Client::new(connection);
-  let client_ref = Rc::new(RefCell::new(client));
-  let display = Display::new(client_ref.clone())?;
-  client_ref.borrow_mut().set_display(display);
-
-  Ok(ClientInterface::new(client_ref))
-}
-
-#[wasm_bindgen]
-pub struct ClientInterface(Rc<RefCell<Client>>);
-
-impl ClientInterface {
-  fn new(client_ref: Rc<RefCell<Client>>) -> Self {
-    Self(client_ref)
-  }
-}
-
-#[wasm_bindgen]
-impl ClientInterface {
-  pub fn on_connected(&self) {
-    self.0.borrow().on_connected();
-  }
-  pub fn on_message(&self, msg: &[u8]) {
-    self.0.borrow_mut().on_message(msg);
-  }
-
-  pub fn submit_action(&self, msg: &str) {
-    self.0.borrow().submit_action(msg);
-  }
-
-    // this is to submit a partial move
-  pub fn submit_move(&self) {
-    self.0.borrow_mut().submit_move();
-  }
-
-    // TODO JS should just be able to call on the view directly
-  pub fn adjust_board_width(&self) {
-    self.0.borrow().adjust_board_width()
-  }
-}
-
+#[derive(Debug)]
 struct MatchState {
   history: MoveHistory,
     // TODO this is now only used to figure it if we're viewing the last state. Combine this with state in a more ergonomic way
@@ -96,15 +62,17 @@ struct MatchState {
   game_state: Game,
 }
 
-struct Client {
-  connection: Connection,
+#[derive(Debug)]
+pub struct Client {
   match_state: Option<MatchState>,
   control: MatchControl,
-  display: Option<Display>, // Is only None before Client is fully initialised. TODO replace with LateInit from once_cell (given in docs)
+  display: LateInit<Display>,
+  connection: LateInit<Connection>,
 }
 
+#[derive(Debug)]
 struct Display {
-  client_ref: Rc<RefCell<Client>>,
+  client_ref: Weak<RefCell<Client>>,
   regenerated_closures: Vec<Closure<dyn Fn()>>,
   permanent_closures: Vec<Closure<dyn Fn(Event)>>,
 }
@@ -115,17 +83,20 @@ enum HistoryJumpTarget {
 }
 
 impl Client {
-  fn new(connection: Connection) -> Self {
-    Self {
-      connection,
+  fn new() -> Result<Rc<RefCell<Self>>, JsValue> {
+    let client = Rc::new(RefCell::new(Self {
       match_state: None,
       control: MatchControl::None,
-      display: None
-    }
-  }
+      display: Default::default(),
+      connection: Default::default(),
+    }));
 
-  fn set_display(&mut self, display: Display) {
-    self.display = Some(display);
+    let connection = Connection::new(Rc::downgrade(&client))?;
+    let display = Display::new(Rc::downgrade(&client))?;
+    client.borrow().display.init(display);
+    client.borrow().connection.init(connection);
+
+    Ok(client)
   }
 
   fn on_connected(&self) {
@@ -187,7 +158,7 @@ impl Client {
             game_state
           };
           self.match_state = Some(match_state);
-          self.display.as_mut().unwrap().update(self.match_state.as_ref().unwrap());
+          self.display.update(self.match_state.as_ref().unwrap());
         }
       }
 
@@ -383,7 +354,7 @@ impl Client {
     };
 
     if did_update {
-      self.display.as_mut().unwrap().update(self.match_state.as_ref().unwrap());
+      self.display.update(self.match_state.as_ref().unwrap());
     }
   }
 
@@ -394,7 +365,7 @@ impl Client {
       match_state.game_state = match_state.history.state(move_idx);
     }
 
-    self.display.as_mut().unwrap().update(self.match_state.as_ref().unwrap());
+    self.display.update(self.match_state.as_ref().unwrap());
   }
 
   fn on_history_step(&mut self, offset: i8) {
@@ -408,7 +379,7 @@ impl Client {
       }
     }
 
-    self.display.as_mut().unwrap().update(self.match_state.as_ref().unwrap());
+    self.display.update(self.match_state.as_ref().unwrap());
   }
 
   fn on_history_jump(&mut self, target: HistoryJumpTarget) {
@@ -422,7 +393,7 @@ impl Client {
       }
     }
 
-    self.display.as_mut().unwrap().update(self.match_state.as_ref().unwrap());
+    self.display.update(self.match_state.as_ref().unwrap());
   }
 
   fn submit_move(&mut self) {
@@ -493,7 +464,7 @@ fn clear_children(el: &Element) -> Result<(), wasm_bindgen::JsValue> {
 }
 
 impl Display {
-  fn new(client_ref: Rc<RefCell<Client>>) -> Result<Self, JsValue> {
+  fn new(client_ref: Weak<RefCell<Client>>) -> Result<Self, JsValue> {
     let mut out = Self {
       client_ref: client_ref.clone(),
       regenerated_closures: vec![],
@@ -508,7 +479,7 @@ impl Display {
         let client_ref = client_ref.clone();
 
         Closure::wrap(Box::new(move |_event: Event| {
-          client_ref.borrow_mut().submit_move();
+          client_ref.upgrade().unwrap().borrow_mut().submit_move();
         }) as Box<dyn Fn(Event)>)
       };
 
@@ -529,7 +500,7 @@ impl Display {
           // Enter
           if event.key_code() == 13 {
             event.prevent_default();
-            client_ref.borrow_mut().submit_action(&input_box.value());
+            client_ref.upgrade().unwrap().borrow_mut().submit_action(&input_box.value());
             input_box.set_value("");
           }
         }) as Box<dyn Fn(Event)>)
@@ -550,17 +521,17 @@ impl Display {
           // left arrow, A
           if [37, 65].contains(&event.key_code()) {
             if event.shift_key() {
-              client_ref.borrow_mut().on_history_jump(HistoryJumpTarget::Start)
+              client_ref.upgrade().unwrap().borrow_mut().on_history_jump(HistoryJumpTarget::Start)
             } else {
-              client_ref.borrow_mut().on_history_step(-1);
+              client_ref.upgrade().unwrap().borrow_mut().on_history_step(-1);
             }
           }
           // right arrow, D
           else if [39, 68].contains(&event.key_code()) {
             if event.shift_key() {
-              client_ref.borrow_mut().on_history_jump(HistoryJumpTarget::End)
+              client_ref.upgrade().unwrap().borrow_mut().on_history_jump(HistoryJumpTarget::End)
             } else {
-              client_ref.borrow_mut().on_history_step( 1);
+              client_ref.upgrade().unwrap().borrow_mut().on_history_step( 1);
             }
           }
         }) as Box<dyn Fn(Event)>)
@@ -576,7 +547,7 @@ impl Display {
         let client_ref = client_ref.clone();
 
         Closure::wrap(Box::new(move |_event: Event| {
-          client_ref.borrow_mut().adjust_board_width();
+          client_ref.upgrade().unwrap().borrow_mut().adjust_board_width();
         }) as Box<dyn Fn(Event)>)
       };
 
@@ -634,7 +605,7 @@ impl Display {
             // if the board size changes. (Having a specific phase for that would allow us to get rid of various repeated work anyway)
           let client_ref = self.client_ref.clone();
           let callback = Closure::wrap(Box::new(move || { // TODO prevent default on e: MouseEvent (from web-sys)
-            client_ref.borrow_mut().on_click(Location::from_coords(col, row).unwrap());
+            client_ref.upgrade().unwrap().borrow_mut().on_click(Location::from_coords(col, row).unwrap());
           }) as Box<dyn Fn()>);
 
           space.set_onclick(Some(callback.as_ref().unchecked_ref())); // as_ref().unchecked_ref() gets &Function from Closure
@@ -789,6 +760,7 @@ impl Display {
       let (mut white_control, mut black_control) = game.board().count_flats_control();
 
       // TODO clean up all the control modification logic
+
         // Adjust the control counts to take the carried stack into account
         // Adds the control of the carried stack if applicable
         // Removes the control of the stack being hovered (if it has stones)
@@ -874,7 +846,7 @@ impl Display {
 
         let client_ref = self.client_ref.clone();
         let callback = Closure::wrap(Box::new(move || { // TODO prevent default on e: MouseEvent (from web-sys)
-          client_ref.borrow_mut().on_history_click(move_idx + 1); // +1 because here we numbered them from 0, but generally the first move has index 1
+          client_ref.upgrade().unwrap().borrow_mut().on_history_click(move_idx + 1); // +1 because here we numbered them from 0, but generally the first move has index 1
         }) as Box<dyn Fn()>);
 
         move_text.set_onclick(Some(callback.as_ref().unchecked_ref())); // as_ref().unchecked_ref() gets &Function from Closure
@@ -913,7 +885,7 @@ impl Display {
         let offset = *offset; // copy the offset value so we don't reference nav_els from inside our move closure
 
         let callback = Closure::wrap(Box::new(move || {
-          client_ref.borrow_mut().on_history_step(offset);
+          client_ref.upgrade().unwrap().borrow_mut().on_history_step(offset);
         }) as Box<dyn Fn()>);
 
         el.set_onclick(Some(callback.as_ref().unchecked_ref()));

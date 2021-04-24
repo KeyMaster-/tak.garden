@@ -1,5 +1,4 @@
-// A dependency graph that contains any wasm must all be imported
-// asynchronously. This `bootstrap.js` file does the single async import, so
-// that no one else needs to worry about it again.
-import("./index.js")
-  .catch(e => console.error("Error importing `index.js`:", e));
+// Import the client wasm module via a JS binding file.
+// This will call our Rust `start()` function, which initialises the app state etc.
+import("../out/pkg/tak_garden_client")
+  .catch(console.error);
